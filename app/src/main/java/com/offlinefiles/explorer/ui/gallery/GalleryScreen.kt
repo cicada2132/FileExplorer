@@ -182,12 +182,14 @@ fun GalleryScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
                         onClick = { g.tab.value = GalleryTab.PHOTOS },
                         enabled = !selecting,
                         text = { Text(stringResource(R.string.gallery_tab_photos)) },
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Tab(
                         selected = tab == GalleryTab.ALBUMS,
                         onClick = { g.tab.value = GalleryTab.ALBUMS },
                         enabled = !selecting,
                         text = { Text(stringResource(R.string.gallery_tab_albums)) },
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (ui.loading && ui.loaded) LinearProgressIndicator(Modifier.fillMaxWidth())

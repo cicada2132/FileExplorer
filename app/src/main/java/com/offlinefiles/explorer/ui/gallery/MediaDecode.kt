@@ -208,7 +208,7 @@ object MediaDecode {
         if (f > 0) parts.add("f/" + short(f))
         val t = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, 0.0)
         if (t > 0) parts.add(if (t < 1.0) "1/${(1.0 / t).roundToInt()}s" else short(t) + "s")
-        val iso = exif.getAttributeInt(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, 0)
+        val iso = exif.getAttributeInt(ExifInterface.TAG_ISO_SPEED_RATINGS, 0)
         if (iso > 0) parts.add("ISO $iso")
         val focal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
         if (focal > 0) parts.add(short(focal) + "mm")
