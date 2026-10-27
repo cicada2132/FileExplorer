@@ -1,1 +1,61 @@
-# FileExplorer
+# 파일 탐색기 (com.offlinefiles.explorer)
+
+오프라인 전용 Android 파일 관리자입니다. Kotlin과 Jetpack Compose로 만들었습니다.
+최소 Android 8.0(API 26), 대상 API 36이며 인터넷 권한이 없습니다.
+
+## 기능
+
+- **저장소**: 내장 메모리, SD 카드, USB(OTG)와 각각의 사용량을 보여 줍니다. 연결하거나 분리하면 자동으로 반영합니다.
+- **탐색**: 목록·격자 보기, 정렬(이름·날짜·크기·종류), 숨김 파일 표시, 경로 표시줄, 빠른 접근 폴더
+- **검색**: 현재 폴더 또는 하위 폴더까지
+- **파일 작업**
+  - 길게 눌러 다중 선택한 뒤 복사·이동(붙여넣기 바), 이름 변경, 삭제, 공유, 속성
+  - 새 폴더·새 파일, 다른 앱으로 열기
+- **이름 충돌 처리**: 덮어쓰기, 합치기(폴더), 둘 다 유지, 건너뛰기, 남은 항목에 모두 적용
+- **압축 (zip·7z)**
+  - 압축 파일 내용 보기, 전체 또는 선택 항목 풀기
+  - 압축 만들기: 수준 4단계, AES-256 비밀번호
+  - 분할 7z(.001, .002…), 한글(CP949) 파일명 zip 지원
+  - 압축 파일 안의 위험한 경로(zip slip) 차단
+- **갤러리** (1.1.0)
+  - 홈 화면의 갤러리 카드에서 사진·동영상 수와 최근 항목을 보고 바로 엽니다.
+  - **사진** 탭: 모든 사진·동영상을 날짜별로 묶어 최신순으로 표시합니다. 두 손가락으로 오므리거나 벌리면 격자 크기가 바뀝니다.
+  - **앨범** 탭: 폴더별 앨범(카메라가 맨 앞), 모든 동영상을 모은 ‘동영상’ 앨범. SD 카드·USB 앨범은 아이콘으로 구분합니다.
+  - **뷰어**: 좌우로 넘기기, 두 손가락 확대, 두 번 탭 확대, 움직이는 GIF·WebP, 상세 정보(해상도·카메라·촬영 정보·GPS)
+  - 공유, 삭제, 이름 변경, 복사·이동, 압축, 폴더에서 보기, ‘다음으로 사용’(배경화면 등)
+  - 파일 목록에서 사진을 누르면 내장 뷰어로 열고 같은 폴더의 사진을 넘겨 봅니다. 설정에서 끌 수 있습니다.
+  - 동영상은 아직 다른 앱(플레이어)으로 엽니다.
+  - Android의 미디어 목록(MediaStore)을 읽으므로 `.nomedia`가 있는 폴더와 숨김 폴더는 보이지 않습니다. 인터넷 권한은 그대로 없습니다.
+- **설정**: 테마(시스템·라이트·다크), Material You 색상, 미리보기 이미지, 폴더 항목 수, 사진을 앱에서 열기, 오픈소스 라이선스
+- **언어**: 한국어, 영어
+- `Android/data`, `Android/obb`는 Android 11부터 시스템 정책상 열 수 없어서 안내 화면으로 처리합니다.
+
+## 빌드
+
+1. Android Studio에서 이 폴더를 열고 실행합니다. 명령줄에서는 `./gradlew assembleDebug`를 씁니다.
+2. 릴리스 서명을 하려면 키 백업 zip에 든 `upload-keystore.jks`와 `keystore.properties`를 프로젝트 루트(이 README가 있는 곳)에 둡니다.
+3. 그다음 아래 명령으로 빌드합니다.
+   - Play 업로드용 AAB: `./gradlew bundleRelease` → `app/build/outputs/bundle/release/app-release.aab`
+   - 직접 설치용 APK: `./gradlew assembleRelease` → `app/build/outputs/apk/release/app-release.apk`
+4. 두 키 파일은 `.gitignore`에 들어 있습니다. 공개 저장소에 올리지 마세요.
+
+## 테스트
+
+`./gradlew testDebugUnitTest`로 모두 37개를 실행합니다. PC의 JVM에서 Robolectric으로 돌아갑니다.
+
+| 테스트 | 개수 | 내용 |
+|---|---|---|
+| `FileOpsTest` | 13 | 정렬, 이름 규칙, 복사·이동·삭제, 충돌 처리, 폴더 합치기 |
+| `ArchiveTest` | 10 | zip·7z 왕복, 비밀번호, 분할, CP949 이름, zip slip, 7-Zip과의 양방향 호환 |
+| `AppFlowTest` | 4 | 실제 화면 흐름 실행, `app/screenshots/`에 스크린샷 저장 |
+| `GalleryCoreTest` | 6 | 앨범 묶기·정렬, 날짜별 구분(시간대), 날짜 보정, 동영상 길이 표시, 폴더 스캔(`.nomedia`·숨김 제외) |
+| `GalleryFlowTest` | 4 | 갤러리·앨범·뷰어·상세 정보·삭제 흐름, 파일 목록에서 사진 열기, 다크·영어 화면 스크린샷 |
+
+- 7-Zip 호환 테스트는 PC에 `7z` 명령이 있을 때만 실행되고, 없으면 건너뜁니다.
+- 일부 테스트는 `python3`를 씁니다.
+
+## Play 스토어 업로드
+
+- `MANAGE_EXTERNAL_STORAGE`(모든 파일 접근)와 `REQUEST_INSTALL_PACKAGES`는 Play 정책상 제한 권한이라 심사 대상입니다.
+  Play Console에서 파일 관리자가 핵심 기능이라는 권한 선언을 제출해야 합니다.
+- 패키지명 `com.offlinefiles.explorer`는 첫 업로드 후에는 바꿀 수 없습니다. 바꾸려면 `app/build.gradle.kts`의 `applicationId`를 먼저 수정하세요.
