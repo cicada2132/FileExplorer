@@ -145,3 +145,10 @@ fun FileExplorerTheme(mode: ThemeMode, dynamicColor: Boolean, content: @Composab
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }
+
+/** The video player is always dark, whatever the app theme (Material You colours when they are on). */
+@Composable
+fun PlayerTheme(dynamicColor: Boolean, content: @Composable () -> Unit) {
+    val scheme = if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(LocalContext.current) else Dark
+    MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, content = content)
+}

@@ -12,6 +12,7 @@ import com.offlinefiles.explorer.core.FileItem
 import com.offlinefiles.explorer.core.FileKind
 import com.offlinefiles.explorer.core.FileOpException
 import com.offlinefiles.explorer.core.FileOps
+import com.offlinefiles.explorer.core.FileTypes
 import com.offlinefiles.explorer.core.ListResult
 import com.offlinefiles.explorer.core.OperationListener
 import com.offlinefiles.explorer.core.OperationResult
@@ -38,6 +39,8 @@ import com.offlinefiles.explorer.ops.OpOutcome
 import com.offlinefiles.explorer.ops.OpRequest
 import com.offlinefiles.explorer.ui.components.FolderCounts
 import com.offlinefiles.explorer.ui.gallery.GalleryModel
+import com.offlinefiles.explorer.ui.player.PlayItem
+import com.offlinefiles.explorer.ui.player.PlayerModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -174,6 +177,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Photos and videos (gallery screens, home card and the full-screen viewer). */
     val gallery = GalleryModel(app, viewModelScope)
 
+    /** The built-in video and music player, drawn over whichever screen opened it. */
+    val player = PlayerModel(
+        context = app,
+        scope = viewModelScope,
+        store = app.playerStore,
+        resumeEnabled = { settings.value.resumePlayback },
+        message = { res -> message(res) },
+    )
+
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = messageChannel.receiveAsFlow()
     private val eventChannel = Channel<UiEvent>(Channel.BUFFERED)
@@ -230,6 +242,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onVolumeRemoved(path: String?) {
         refreshVolumes()
         gallery.onChanged()
+        if (path != null) player.onRemoved(listOf(path))
         val here = currentDir() ?: archive.value?.path
         if (path != null && here != null && (here == path || here.startsWith("$path/"))) {
             goHome()
@@ -272,6 +285,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         archive.value = null
         gallery.clearSelection()
         gallery.closeViewer(null)
+        player.close()
         refreshVolumes()
     }
 
@@ -363,8 +377,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             item.isDirectory -> openDir(item.path)
             ArchiveFormats.typeOf(item.name) != null -> dialog.value = DialogState.ArchiveActions(item)
             item.kind == FileKind.IMAGE && settings.value.openMediaInApp -> openFolderViewer(item)
+            isPlayable(item.kind) && settings.value.playerInApp -> openFolderPlayer(item)
             else -> eventChannel.trySend(UiEvent.Open(item.path))
         }
+    }
+
+    private fun isPlayable(kind: FileKind) = kind == FileKind.VIDEO || kind == FileKind.AUDIO
+
+    /** Built-in player over the videos (or the songs) of the list being shown, starting at [item]. */
+    private fun openFolderPlayer(item: FileItem) {
+        val queue = visibleItems.value.filter { it.kind == item.kind }.map { PlayItem(it.path, it.name, it.kind == FileKind.VIDEO) }
+        player.open(queue.ifEmpty { listOf(PlayItem(item.path, item.name, item.kind == FileKind.VIDEO)) }, item.path)
+    }
+
+    override fun onCleared() {
+        player.close()
+        super.onCleared()
     }
 
     /** Built-in viewer over the photos and videos of the list being shown, starting at [item]. */
@@ -417,9 +445,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------ gallery actions
 
-    /** Videos (and anything the viewer can't show) go to another app for now. */
-    fun openMedia(item: MediaItem) {
-        eventChannel.trySend(UiEvent.Open(item.path, mime = item.mime.ifBlank { null }))
+    /**
+     * Plays a video from the photo viewer: in the built-in player with the other videos of
+     * [around] queued up, or in another app when the setting is off.
+     */
+    fun openMedia(item: MediaItem, around: List<MediaItem> = listOf(item)) {
+        if (!settings.value.playerInApp) {
+            eventChannel.trySend(UiEvent.Open(item.path, mime = item.mime.ifBlank { null }))
+            return
+        }
+        val queue = around.filter { it.isVideo }.ifEmpty { listOf(item) }.map { PlayItem(it.path, it.name, it.isVideo) }
+        player.open(queue, item.path)
     }
 
     fun setAs(item: MediaItem) {
@@ -644,6 +680,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (r.succeeded > 0) message(R.string.msg_deleted, r.succeeded)
                         FileIntents.notifyMediaStore(app, request.paths)
                         gallery.onRemoved(request.paths)
+                        player.onRemoved(request.paths.filterNot { File(it).exists() })
                     }
                     is OpRequest.Compress -> {
                         message(R.string.msg_compressed, File(request.output).name)
@@ -652,7 +689,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     is OpRequest.Extract -> {
                         if (pending.value is Pending.ExtractTo) pending.value = null
                         if (request.openAfter != null) {
-                            if (File(request.openAfter).exists()) eventChannel.trySend(UiEvent.Open(request.openAfter))
+                            if (File(request.openAfter).exists()) openExtracted(request.openAfter)
                         } else {
                             message(R.string.msg_extracted, r.succeeded)
                             FileIntents.notifyMediaStore(app, r.outputs.map { it.path })
@@ -686,6 +723,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 refresh()
                 gallery.onChanged()
             }
+        }
+    }
+
+    /** A single file unpacked from an archive to be opened: media plays here, the rest goes to other apps. */
+    private fun openExtracted(path: String) {
+        val f = File(path)
+        val kind = FileTypes.kindOf(f.name)
+        if (isPlayable(kind) && settings.value.playerInApp) {
+            player.open(listOf(PlayItem(path, f.name, kind == FileKind.VIDEO)), path)
+        } else {
+            eventChannel.trySend(UiEvent.Open(path))
         }
     }
 

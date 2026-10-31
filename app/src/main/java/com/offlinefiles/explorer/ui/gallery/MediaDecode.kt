@@ -104,7 +104,7 @@ object MediaDecode {
         return rotated
     }
 
-    /** A still frame for a video page (the video itself plays in another app for now). */
+    /** A still frame for a video page in the photo viewer (the play button opens the player). */
     fun videoFrame(item: MediaItem, maxSide: Int): Bitmap? {
         val file = File(item.path)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

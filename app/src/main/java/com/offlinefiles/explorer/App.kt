@@ -1,6 +1,7 @@
 package com.offlinefiles.explorer
 
 import android.app.Application
+import com.offlinefiles.explorer.data.PlayerStore
 import com.offlinefiles.explorer.data.Prefs
 import com.offlinefiles.explorer.ops.OperationManager
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,8 @@ class App : Application() {
         private set
     lateinit var operations: OperationManager
         private set
+    lateinit var playerStore: PlayerStore
+        private set
 
     /** Where single files are unpacked when opened straight from an archive. */
     val openCacheDir: File get() = File(cacheDir, "opened")
@@ -23,6 +26,7 @@ class App : Application() {
         super.onCreate()
         prefs = Prefs(this)
         operations = OperationManager(appScope)
+        playerStore = PlayerStore(this)
         appScope.launch(Dispatchers.IO) { trimOpenCache() }
     }
 
