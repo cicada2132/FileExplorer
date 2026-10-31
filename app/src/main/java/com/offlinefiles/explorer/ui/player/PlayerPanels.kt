@@ -94,7 +94,7 @@ import kotlin.math.roundToInt
 /** Side sheets of the player (bottom sheets in portrait). */
 enum class Panel { MORE, SPEED, SUBTITLES, AUDIO, SLEEP, QUEUE, INFO }
 
-private val PanelColor = Color(0xF2181A1F)
+private val PanelColor = Color(0xFF181A1F)
 
 @Composable
 fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel: (Panel?) -> Unit, onNote: (String) -> Unit) {

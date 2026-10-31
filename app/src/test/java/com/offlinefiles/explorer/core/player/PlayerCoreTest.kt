@@ -177,7 +177,9 @@ class PlayerCoreTest {
         assertEquals(4, shuffled.first())
         assertEquals((0 until 10).toSet(), shuffled.toSet())
         assertEquals(shuffled[1], PlayQueue.step(shuffled, 4, 1, RepeatMode.OFF))
-        assertEquals(RepeatMode.OFF, RepeatMode.ALL.next())
+        assertEquals(RepeatMode.ALL, RepeatMode.OFF.next())
+        assertEquals(RepeatMode.ONE, RepeatMode.ALL.next())
+        assertEquals(RepeatMode.OFF, RepeatMode.ONE.next())
     }
 
     @Test

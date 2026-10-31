@@ -6,9 +6,12 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** OFF plays the queue once and stops; ONE loops the current file; ALL loops the queue. */
+/**
+ * OFF plays the queue once and stops; ALL loops the queue; ONE loops the current file.
+ * Declared in the order the repeat button cycles (as in VLC and music apps).
+ */
 enum class RepeatMode {
-    OFF, ONE, ALL;
+    OFF, ALL, ONE;
 
     fun next(): RepeatMode = entries[(ordinal + 1) % entries.size]
 }
