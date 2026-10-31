@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,7 +36,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -54,6 +58,8 @@ import com.offlinefiles.explorer.R
 import com.offlinefiles.explorer.core.FileItem
 import com.offlinefiles.explorer.data.StorageVolumes
 import com.offlinefiles.explorer.data.ViewMode
+import com.offlinefiles.explorer.data.VolumeAccess
+import com.offlinefiles.explorer.data.VolumeKind
 import com.offlinefiles.explorer.ui.BrowserUi
 import com.offlinefiles.explorer.ui.DialogState
 import com.offlinefiles.explorer.ui.MainViewModel
@@ -141,6 +147,9 @@ fun BrowserScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
                     )
                 }
                 if (search == null) Breadcrumbs(path, volumes, onNavigate = { if (it != path) vm.openDir(it) })
+                if (search == null && !selecting && volume != null && volume.readOnly && volume.canGrant) {
+                    ReadOnlyBanner(onAllow = { vm.showDialog(DialogState.UsbAccess(volume)) })
+                }
                 if (running?.hidden == true) {
                     val f = running?.progress?.fraction
                     if (f != null) LinearProgressIndicator(progress = { f }, modifier = Modifier.fillMaxWidth())
@@ -171,7 +180,20 @@ fun BrowserScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
             modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()),
         ) {
             val bottomPad = padding.calculateBottomPadding() + if (!selecting && pending == null) 88.dp else 8.dp
+            // A drive Android keeps from apps (or one that was unplugged) rather than a protected folder.
+            val drive = volume?.takeIf { v ->
+                v.kind != VolumeKind.INTERNAL && when (browser.status) {
+                    BrowserUi.Status.OK -> false
+                    BrowserUi.Status.DENIED -> v.access != VolumeAccess.PATH || path == v.path
+                    BrowserUi.Status.NOT_FOUND -> v.access == VolumeAccess.NEEDS_GRANT
+                }
+            }
             when {
+                drive != null -> EmptyState(
+                    Icons.Filled.Usb, stringResource(R.string.browser_usb_denied_title), stringResource(R.string.browser_usb_denied_body),
+                    action = if (drive.canGrant) stringResource(R.string.action_allow_access) to { vm.showDialog(DialogState.UsbAccess(drive)) }
+                    else stringResource(R.string.action_home) to vm::goHome,
+                )
                 browser.status == BrowserUi.Status.DENIED -> EmptyState(
                     Icons.Filled.Lock, stringResource(R.string.browser_denied_title), stringResource(R.string.browser_denied_body),
                 )
@@ -250,6 +272,25 @@ fun BrowserScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
 private fun relativeParent(item: FileItem, root: String): String {
     val parent = File(item.path).parent ?: return ""
     return if (parent == root) "./" else "./" + parent.removePrefix("$root/")
+}
+
+/** Android 8–10 let apps read removable drives but change them only through the file picker. */
+@Composable
+private fun ReadOnlyBanner(onAllow: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.readonly_banner),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onAllow) { Text(stringResource(R.string.action_allow_access)) }
+        }
+    }
 }
 
 @Composable

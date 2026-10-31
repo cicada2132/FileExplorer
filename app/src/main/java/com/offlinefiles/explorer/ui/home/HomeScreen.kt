@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -68,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.offlinefiles.explorer.R
 import com.offlinefiles.explorer.core.gallery.MediaItem
+import com.offlinefiles.explorer.data.VolumeAccess
 import com.offlinefiles.explorer.data.VolumeInfo
 import com.offlinefiles.explorer.data.VolumeKind
 import com.offlinefiles.explorer.ui.MainViewModel
@@ -127,7 +129,7 @@ fun HomeScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { SectionTitle(stringResource(R.string.home_storage)) }
-            items(volumes, key = { it.path }) { v -> VolumeCard(v) { vm.openDir(v.path) } }
+            items(volumes, key = { it.path }) { v -> VolumeCard(v) { vm.openVolume(v) } }
             item { SectionTitle(stringResource(R.string.gallery_title)) }
             item { GalleryCard(gallery, onClick = vm::openGallery) }
             if (shortcuts.isNotEmpty()) {
@@ -178,12 +180,21 @@ private fun VolumeCard(v: VolumeInfo, onClick: () -> Unit) {
                 Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
             Spacer(Modifier.width(16.dp))
+            val needsAccess = v.access == VolumeAccess.NEEDS_GRANT
+            val readOnly = if (v.readOnly) stringResource(R.string.home_read_only) else null
             Column(Modifier.weight(1f)) {
                 Text(v.label, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(2.dp))
-                if (v.totalBytes > 0) {
+                if (needsAccess) {
                     Text(
-                        stringResource(R.string.home_used_of, Format.shortSize(context, v.usedBytes), Format.shortSize(context, v.totalBytes)),
+                        stringResource(R.string.home_tap_to_allow),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else if (v.totalBytes > 0) {
+                    val used = stringResource(R.string.home_used_of, Format.shortSize(context, v.usedBytes), Format.shortSize(context, v.totalBytes))
+                    Text(
+                        if (readOnly != null) "$used · $readOnly" else used,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -196,9 +207,14 @@ private fun VolumeCard(v: VolumeInfo, onClick: () -> Unit) {
                         drawStopIndicator = {},
                         trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                     )
+                } else if (readOnly != null) {
+                    Text(readOnly, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (v.totalBytes > 0) {
+            if (needsAccess) {
+                Spacer(Modifier.width(14.dp))
+                Icon(Icons.Filled.LockOpen, null, tint = MaterialTheme.colorScheme.primary)
+            } else if (v.totalBytes > 0) {
                 Spacer(Modifier.width(14.dp))
                 Text(
                     "${(v.usedFraction * 100).toInt()}%",

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -46,6 +47,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,8 +60,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.offlinefiles.explorer.BuildConfig
 import com.offlinefiles.explorer.R
+import com.offlinefiles.explorer.data.StorageVolumes
 import com.offlinefiles.explorer.data.ThemeMode
 import com.offlinefiles.explorer.ui.MainViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,6 +123,18 @@ fun SettingsScreen(vm: MainViewModel) {
             }
             SwitchRow(Icons.Filled.History, stringResource(R.string.settings_resume), stringResource(R.string.settings_resume_desc), s.resumePlayback) { on ->
                 vm.updateSettings { it.copy(resumePlayback = on) }
+            }
+            // USB drives the user opened to the app in the system file picker.
+            val context = LocalContext.current
+            val volumes by vm.volumes.collectAsStateWithLifecycle()
+            var forgotten by remember { mutableStateOf(false) }
+            val granted by produceState(0, volumes) { value = withContext(Dispatchers.IO) { StorageVolumes.grantedTrees(context).size } }
+            if (granted > 0 && !forgotten) {
+                Section(stringResource(R.string.settings_storage))
+                InfoRow(Icons.Filled.Usb, stringResource(R.string.settings_usb_access), stringResource(R.string.settings_usb_access_desc)) {
+                    forgotten = true
+                    vm.forgetDriveAccess()
+                }
             }
             Section(stringResource(R.string.settings_about))
             InfoRow(Icons.Filled.WifiOff, stringResource(R.string.settings_offline), stringResource(R.string.settings_offline_desc))

@@ -152,15 +152,15 @@ class PlayerFlowTest {
         waitFor { vm.player.position.value == 83_000L }
         assertEquals("성산일출봉 정상에 도착했어요!\n바람이 정말 시원하네요", vm.player.subtitleText.value)
         settle(600)
-        screen("50_player")
+        screen("60_player")
 
         clickLast("더보기")
         settle()
-        screen("51_player_menu")
+        screen("61_player_menu")
         compose.onNodeWithText("재생 속도").performClick()
         compose.runOnIdle { vm.player.setSpeed(1.5f) }
         settle()
-        screen("52_player_speed")
+        screen("62_player_speed")
         assertEquals(1.5f, vm.player.ui.value!!.speed)
         back()
         settle()
@@ -175,14 +175,14 @@ class PlayerFlowTest {
         compose.runOnIdle { vm.player.setSubtitleDelay(500) }
         assertNotNull(vm.player.subtitleText.value)
         settle()
-        screen("53_player_subtitles")
+        screen("63_player_subtitles")
         back()
         settle()
         assertNotNull(vm.player.ui.value)
 
         compose.onNodeWithContentDescription("조작 잠금").performClick()
         settle()
-        screen("54_player_locked")
+        screen("64_player_locked")
         back() // locked: back only shows the unlock button
         assertNotNull(vm.player.ui.value)
         compose.onNodeWithContentDescription("눌러서 잠금 해제").performClick()
@@ -236,7 +236,7 @@ class PlayerFlowTest {
         assertEquals(RepeatMode.ALL, vm.player.ui.value!!.repeat)
         assertTrue(vm.player.ui.value!!.canNext)
         settle(600)
-        screen("55_player_music")
+        screen("65_player_music")
 
         // Past the first seconds of a song, "previous" restarts it.
         compose.runOnIdle { vm.player.previous() }
@@ -297,7 +297,7 @@ class PlayerFlowTest {
         settle()
         clickLast("More")
         settle()
-        screen("56_en_player_menu")
+        screen("66_en_player_menu")
         back()
         compose.runOnIdle { vm.player.close() }
     }

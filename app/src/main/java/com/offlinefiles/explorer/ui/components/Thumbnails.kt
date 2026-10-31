@@ -16,8 +16,10 @@ import android.util.Size
 import com.offlinefiles.explorer.core.DirectoryLister
 import com.offlinefiles.explorer.core.FileItem
 import com.offlinefiles.explorer.core.FileKind
+import com.offlinefiles.explorer.core.ListResult
 import com.offlinefiles.explorer.core.gallery.MediaItem
 import com.offlinefiles.explorer.data.MediaLibrary
+import com.offlinefiles.explorer.data.Stores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.withContext
@@ -57,6 +59,14 @@ object Thumbnails {
     }
 
     private fun decode(context: Context, item: FileItem, px: Int): Bitmap? {
+        Stores.tree(item.path)?.let { tree ->
+            return when (item.kind) {
+                FileKind.IMAGE -> DocumentMedia.image(tree, item.path, px, fitLongSide = false)
+                FileKind.VIDEO -> DocumentMedia.videoFrame(tree, item.path, px)
+                FileKind.AUDIO -> DocumentMedia.albumArt(tree, item.path, px)
+                else -> null // APK icons need a file path.
+            }
+        }
         val file = File(item.path)
         val size = Size(px, px)
         return when (item.kind) {
@@ -117,6 +127,10 @@ object Thumbnails {
     }
 
     private fun fromFile(item: MediaItem, px: Int): Bitmap? {
+        Stores.tree(item.path)?.let { tree ->
+            return if (item.isVideo) DocumentMedia.videoFrame(tree, item.path, px)
+            else DocumentMedia.image(tree, item.path, px, fitLongSide = false)
+        }
         val file = File(item.path)
         if (item.isVideo) {
             return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -217,7 +231,10 @@ object FolderCounts {
         val k = key(item, includeHidden)
         cache[k]?.let { return it }
         return withContext(dispatcher) {
-            DirectoryLister.childCount(File(item.path), includeHidden)?.also { cache[k] = it }
+            val count = Stores.tree(item.path)?.let { tree ->
+                (tree.list(item.path) as? ListResult.Ok)?.items?.count { includeHidden || !it.isHidden }
+            } ?: DirectoryLister.childCount(File(item.path), includeHidden)
+            count?.also { cache[k] = it }
         }
     }
 

@@ -1,6 +1,8 @@
 package com.offlinefiles.explorer.ui
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -18,6 +20,7 @@ import com.offlinefiles.explorer.core.OperationListener
 import com.offlinefiles.explorer.core.OperationResult
 import com.offlinefiles.explorer.core.SortSpec
 import com.offlinefiles.explorer.core.Sorting
+import com.offlinefiles.explorer.core.StoreOps
 import com.offlinefiles.explorer.core.archive.ArchiveEntryInfo
 import com.offlinefiles.explorer.core.archive.ArchiveError
 import com.offlinefiles.explorer.core.archive.ArchiveException
@@ -30,10 +33,15 @@ import com.offlinefiles.explorer.core.archive.CompressionLevel
 import com.offlinefiles.explorer.core.gallery.MediaItem
 import com.offlinefiles.explorer.core.gallery.toMediaItem
 import com.offlinefiles.explorer.data.FileIntents
+import com.offlinefiles.explorer.data.GrantResult
 import com.offlinefiles.explorer.data.Settings
 import com.offlinefiles.explorer.data.StorageVolumes
+import com.offlinefiles.explorer.data.Stores
 import com.offlinefiles.explorer.data.ViewMode
+import com.offlinefiles.explorer.data.VolumeAccess
 import com.offlinefiles.explorer.data.VolumeInfo
+import com.offlinefiles.explorer.data.VolumeKind
+import com.offlinefiles.explorer.ops.DocumentStaging
 import com.offlinefiles.explorer.ops.OpEvent
 import com.offlinefiles.explorer.ops.OpOutcome
 import com.offlinefiles.explorer.ops.OpRequest
@@ -100,6 +108,8 @@ sealed interface DialogState {
     data class ArchiveExtract(val selection: Set<String>?, val stripPrefix: String) : DialogState
     /** Details of a photo or video (date, resolution, camera…). */
     data class MediaInfo(val item: MediaItem) : DialogState
+    /** Explains the system file picker before it opens for a USB drive. */
+    data class UsbAccess(val volume: VolumeInfo) : DialogState
 }
 
 sealed interface UiEvent {
@@ -107,6 +117,8 @@ sealed interface UiEvent {
     data class Share(val paths: List<String>) : UiEvent
     data class ScrollTo(val path: String) : UiEvent
     data class SetAs(val path: String, val mime: String?) : UiEvent
+    /** Open the system file picker so the user can give access to a drive. */
+    data class RequestAccess(val intent: Intent) : UiEvent
 }
 
 data class BrowserUi(
@@ -153,6 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = app.prefs
     val operations = app.operations
     val settings: StateFlow<Settings> = prefs.settings
+    private val staging = app.staging
 
     private val stack = MutableStateFlow<List<Route>>(listOf(Route.Home))
     val route: StateFlow<Route> = stack.map { it.last() }.stateIn(viewModelScope, SharingStarted.Eagerly, Route.Home)
@@ -212,6 +225,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var loadJob: Job? = null
     private var searchJob: Job? = null
     private var highlightJob: Job? = null
+    private var usbJob: Job? = null
+
+    /** Cache copy of the archive shown in the viewer, when it lives on a USB document tree. */
+    private var viewerArchive: Pair<String, DocumentStaging.Staged>? = null
 
     init {
         refreshVolumes()
@@ -232,9 +249,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------ navigation
 
-    fun refreshVolumes() {
+    fun refreshVolumes(then: ((List<VolumeInfo>) -> Unit)? = null) {
         viewModelScope.launch {
-            _volumes.value = withContext(Dispatchers.IO) { StorageVolumes.list(app) }
+            val list = withContext(Dispatchers.IO) { StorageVolumes.list(app) }
+            applyVolumes(list)
+            then?.invoke(list)
+        }
+    }
+
+    private fun applyVolumes(list: List<VolumeInfo>) {
+        val before = _volumes.value
+        Stores.update(app.contentResolver, list)
+        _volumes.value = list
+        if (before.isEmpty()) return
+        // Drives reached through the file picker send no unmount broadcast, so notice them leaving here.
+        val here = currentDir() ?: archive.value?.path
+        val was = here?.let { StorageVolumes.volumeFor(it, before) }
+        if (here != null && was != null && was.kind != VolumeKind.INTERNAL && StorageVolumes.volumeFor(here, list)?.path != was.path) {
+            goHome()
+            message(R.string.msg_volume_removed)
+            return
+        }
+        list.firstOrNull { v -> v.kind != VolumeKind.INTERNAL && before.none { it.path == v.path } }
+            ?.let { message(R.string.msg_volume_connected, it.label) }
+    }
+
+    /** A USB device was plugged in or out. Mounting takes a moment, so look again shortly after. */
+    fun onUsbDeviceChanged() {
+        usbJob?.cancel()
+        usbJob = viewModelScope.launch {
+            for (wait in longArrayOf(0L, 1500L, 3500L)) {
+                delay(wait)
+                applyVolumes(withContext(Dispatchers.IO) { StorageVolumes.list(app) })
+            }
+        }
+    }
+
+    /** Home's storage cards: drives Android keeps from apps ask for access first. */
+    fun openVolume(v: VolumeInfo) {
+        if (v.access == VolumeAccess.NEEDS_GRANT) dialog.value = DialogState.UsbAccess(v) else openDir(v.path)
+    }
+
+    /** Opens the system file picker at the root of [v]. */
+    fun requestAccess(v: VolumeInfo) {
+        dialog.value = null
+        eventChannel.trySend(UiEvent.RequestAccess(StorageVolumes.accessIntent(app, v)))
+    }
+
+    /** What the user picked in the system file picker (null if they backed out). */
+    fun onAccessResult(uri: Uri?) {
+        if (uri == null) return
+        when (val r = StorageVolumes.acceptGrant(app, uri, _volumes.value)) {
+            is GrantResult.Granted -> refreshVolumes { list ->
+                val v = list.firstOrNull { it.uuid == r.uuid } ?: return@refreshVolumes
+                val here = currentDir()
+                if (here != null && StorageVolumes.volumeFor(here, list)?.path == v.path) refresh() else openDir(v.path)
+            }
+            GrantResult.NotRoot -> message(R.string.msg_usb_pick_root)
+            GrantResult.NotADrive -> message(R.string.msg_usb_not_drive)
+            GrantResult.Failed -> message(R.string.msg_failed_generic)
+        }
+    }
+
+    /** Settings: give back access to the drives opened through the file picker. */
+    fun forgetDriveAccess() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { StorageVolumes.releaseGrants(app) }
+            refreshVolumes()
+            message(R.string.msg_usb_access_forgotten)
         }
     }
 
@@ -282,7 +364,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         stack.value = listOf(Route.Home)
         selection.value = emptySet()
         closeSearch()
-        archive.value = null
+        closeArchiveViewer()
         gallery.clearSelection()
         gallery.closeViewer(null)
         player.close()
@@ -296,7 +378,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val leaving = s.last()
         val next = s.dropLast(1)
         stack.value = next
-        if (leaving is Route.Archive) archive.value = null
+        if (leaving is Route.Archive) closeArchiveViewer()
         if (leaving is Route.Gallery || leaving is Route.Album) gallery.clearSelection()
         selection.value = emptySet()
         closeSearch()
@@ -336,7 +418,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!same) rawListing.value = null
         if (!keepSelection) selection.value = emptySet()
         loadJob = viewModelScope.launch {
-            when (val result = withContext(Dispatchers.IO) { DirectoryLister.list(File(path)) }) {
+            val result = withContext(Dispatchers.IO) { Stores.tree(path)?.list(path) ?: DirectoryLister.list(File(path)) }
+            when (result) {
                 is ListResult.Ok -> {
                     rawListing.value = Listing(path, result.items, ++listingToken)
                     if (keepSelection) {
@@ -390,11 +473,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         player.open(queue.ifEmpty { listOf(PlayItem(item.path, item.name, item.kind == FileKind.VIDEO)) }, item.path)
     }
 
-    override fun onCleared() {
-        player.close()
-        super.onCleared()
-    }
-
     /** Built-in viewer over the photos and videos of the list being shown, starting at [item]. */
     private fun openFolderViewer(item: FileItem) {
         val media = visibleItems.value.mapNotNull { it.toMediaItem() }
@@ -435,6 +513,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun openAs(path: String, mime: String) = eventChannel.trySend(UiEvent.Open(path, mime = mime))
 
     fun share(paths: List<String>) {
+        if (paths.any(Stores::isDocument)) {
+            // Files on a USB document tree: ask the drive which of them are files.
+            viewModelScope.launch {
+                val files = withContext(Dispatchers.IO) {
+                    paths.filter { p -> Stores.storeFor(p).stat(p)?.isDirectory == false }
+                }
+                if (files.isEmpty()) {
+                    message(R.string.msg_share_folders)
+                } else {
+                    eventChannel.trySend(UiEvent.Share(files))
+                    clearSelection()
+                    gallery.clearSelection()
+                }
+            }
+            return
+        }
         if (paths.none { File(it).isFile }) {
             message(R.string.msg_share_folders); return
         }
@@ -515,7 +609,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             search.update { it?.copy(running = true, results = emptyList(), truncated = false) }
             val found = ArrayList<FileItem>()
             var last = 0L
-            DirectoryLister.search(File(root), s.query, includeHidden, LIMIT).flowOn(Dispatchers.IO).collect { item ->
+            val results = Stores.tree(root)?.let { StoreOps.search(it, root, s.query, includeHidden, LIMIT) }
+                ?: DirectoryLister.search(File(root), s.query, includeHidden, LIMIT)
+            results.flowOn(Dispatchers.IO).collect { item ->
                 found += item
                 val now = System.currentTimeMillis()
                 if (now - last > 200) {
@@ -530,24 +626,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ------------------------------------------------------------------ simple file actions
 
     fun createFolder(parent: String, name: String) = quick {
-        val f = FileOps.createFolder(File(parent), name)
-        afterQuickChange(f.path)
+        val path = Stores.tree(parent)?.let { StoreOps.createFolder(it, parent, name) }
+            ?: FileOps.createFolder(File(parent), name).path
+        afterQuickChange(path)
     }
 
     fun createFile(parent: String, name: String) = quick {
-        val f = FileOps.createFile(File(parent), name)
-        afterQuickChange(f.path)
+        val path = Stores.tree(parent)?.let { StoreOps.createFile(it, parent, name) }
+            ?: FileOps.createFile(File(parent), name).path
+        afterQuickChange(path)
     }
 
     fun rename(path: String, newName: String) = quick {
-        val f = FileOps.rename(File(path), newName)
-        FileIntents.notifyMediaStore(app, listOf(path, f.path))
+        val tree = Stores.tree(path)
+        val newPath = if (tree != null) StoreOps.rename(tree, path, newName) else FileOps.rename(File(path), newName).path
+        FileIntents.notifyMediaStore(app, listOf(path, newPath))
         withContext(Dispatchers.Main) {
-            gallery.onRenamed(path, f.path)
+            gallery.onRenamed(path, newPath)
             gallery.clearSelection()
         }
-        afterQuickChange(f.path)
+        afterQuickChange(newPath)
     }
+
+    /** Whether [name] is taken in [parent] by something other than [originalPath] (name dialogs). */
+    fun nameTaken(parent: String, name: String, originalPath: String? = null): Boolean {
+        if (Stores.isDocument(parent)) {
+            // Answer from the listing on screen; asking the drive on every keystroke is too slow.
+            val b = _browser.value
+            if (b.path != parent) return false
+            return b.all.any { it.name.equals(name, ignoreCase = true) && !it.path.equals(originalPath, ignoreCase = true) }
+        }
+        val target = File(parent, name)
+        return target.exists() && (originalPath == null || !FileOps.isSameFile(File(originalPath), target))
+    }
+
+    /** "New folder", or "New folder (1)" when that is taken, for the name dialogs. */
+    fun freeName(parent: String, name: String, isDirectory: Boolean): String {
+        if (!Stores.isDocument(parent)) return FileOps.uniqueChild(File(parent), name, isDirectory).name
+        val taken = _browser.value.takeIf { it.path == parent }?.all.orEmpty().mapTo(HashSet()) { it.name.lowercase() }
+        if (name.lowercase() !in taken) return name
+        val (base, ext) = FileOps.splitName(name, isDirectory)
+        var i = 1
+        while ("$base ($i)$ext".lowercase() in taken) i++
+        return "$base ($i)$ext"
+    }
+
+    /** Whether [path] is a folder; for USB document trees, as far as the listing on screen knows. */
+    fun isFolder(path: String): Boolean =
+        if (Stores.isDocument(path)) visibleItems.value.firstOrNull { it.path == path }?.isDirectory == true
+        else File(path).isDirectory
 
     private fun quick(block: suspend () -> Unit) {
         dialog.value = null
@@ -585,7 +712,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val dest = currentDir() ?: return
         when (val p = pending.value) {
             is Pending.Paste -> start(OpRequest.Transfer(p.paths, dest, p.move)) { l ->
-                FileOps.copyOrMove(p.paths.map(::File), File(dest), p.move, l)
+                if (Stores.isDocument(dest) || p.paths.any(Stores::isDocument)) StoreOps.copyOrMove(p.paths, dest, p.move, Stores, l)
+                else FileOps.copyOrMove(p.paths.map(::File), File(dest), p.move, l)
             }
             is Pending.ExtractTo -> runExtract(
                 OpRequest.Extract(p.archive, dest, p.password, p.selection, p.stripPrefix),
@@ -598,7 +726,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dialog.value = null
         clearSelection()
         gallery.clearSelection()
-        start(OpRequest.Delete(paths)) { l -> FileOps.delete(paths.map(::File), l) }
+        start(OpRequest.Delete(paths)) { l ->
+            if (paths.any(Stores::isDocument)) StoreOps.delete(paths, Stores, l) else FileOps.delete(paths.map(::File), l)
+        }
     }
 
     fun compress(paths: List<String>, name: String, type: ArchiveType, level: CompressionLevel, password: CharArray?) {
@@ -608,7 +738,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val parent = File(paths.first()).parentFile ?: return
         val output = File(parent, "$name.${type.extension}")
         start(OpRequest.Compress(paths, output.path, type, level, password)) { l ->
-            ArchiveOps.compress(paths.map(::File), output, type, level, password, l)
+            if (Stores.isDocument(output.path) || paths.any(Stores::isDocument)) {
+                staging.compress(paths, output.path, type, level, password, l)
+            } else {
+                ArchiveOps.compress(paths.map(::File), output, type, level, password, l)
+            }
         }
     }
 
@@ -637,7 +771,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun doExtract(req: OpRequest.Extract, l: OperationListener): OperationResult {
-        val archiveFile = File(req.archive)
+        if (!Stores.isDocument(req.archive) && !Stores.isDocument(req.destDir)) return extractLocal(File(req.archive), req, l)
+        // A USB document tree on either side: archives are read from a cache copy, and files
+        // for the drive are extracted into the cache and then moved over.
+        val staged = if (Stores.isDocument(req.archive)) staging.acquireArchive(req.archive, l) else null
+        try {
+            val archiveFile = staged?.file ?: File(req.archive)
+            if (!Stores.isDocument(req.destDir)) return extractLocal(archiveFile, req, l)
+            return staging.extractInto(
+                archiveFile, File(req.archive).name, req.password, req.destDir, l, req.selection, req.stripPrefix, req.smartFolder,
+            )
+        } finally {
+            staged?.let(staging::release)
+        }
+    }
+
+    private suspend fun extractLocal(archiveFile: File, req: OpRequest.Extract, l: OperationListener): OperationResult {
         if (req.openAfter != null) File(req.openAfter).delete()
         if (!req.smartFolder) {
             return ArchiveOps.extract(archiveFile, req.password, File(req.destDir), l, req.selection, req.stripPrefix)
@@ -653,10 +802,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** "Extract to folder": skip the extra level when the archive already holds one folder of that name. */
     private fun smartDestination(reader: ArchiveReader, parent: File, base: String): File {
-        val tops = reader.entries.mapTo(HashSet()) { it.path.substringBefore('/') }
-        val single = tops.singleOrNull()
-        val singleIsFolder = single != null && reader.entries.any { it.path.startsWith("$single/") || (it.path == single && it.isDirectory) }
-        return if (singleIsFolder && single.equals(base, ignoreCase = true)) parent
+        val single = ArchiveOps.singleTopFolder(reader.entries)
+        return if (single != null && single.equals(base, ignoreCase = true)) parent
         else FileOps.uniqueChild(parent, base, isDirectory = true)
     }
 
@@ -763,16 +910,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dialog.value = null
         clearSelection()
         stack.update { it + Route.Archive(path) }
+        releaseViewerArchive()
         archive.value = ArchiveUi(path)
         loadArchive(path, null)
+    }
+
+    private fun closeArchiveViewer() {
+        archive.value = null
+        releaseViewerArchive()
+    }
+
+    private fun releaseViewerArchive() {
+        val held = viewerArchive ?: return
+        viewerArchive = null
+        app.appScope.launch(Dispatchers.IO) { staging.release(held.second) }
+    }
+
+    /** The archive as a local file: itself, or a cache copy when it lives on a USB document tree. Main thread. */
+    private suspend fun viewerArchiveFile(path: String): File {
+        if (!Stores.isDocument(path)) return File(path)
+        viewerArchive?.takeIf { it.first == path }?.let { return it.second.file }
+        val staged = withContext(Dispatchers.IO) { staging.acquireArchive(path, null) }
+        if (archive.value?.path != path) {
+            // The viewer was closed while the copy was made.
+            withContext(Dispatchers.IO) { staging.release(staged) }
+            throw ArchiveException(ArchiveError.CORRUPT)
+        }
+        releaseViewerArchive()
+        viewerArchive = path to staged
+        return staged.file
     }
 
     private fun loadArchive(path: String, password: CharArray?) {
         viewModelScope.launch {
             archive.update { it?.copy(loading = true, error = null) }
-            val result = withContext(Dispatchers.IO) {
-                runCatching { Archives.open(File(path), password).use { it.entries } }
+            val result = runCatching {
+                val file = viewerArchiveFile(path)
+                withContext(Dispatchers.IO) { Archives.open(file, password).use { it.entries } }
             }
+            if (archive.value?.path != path) return@launch
             result.onSuccess { entries ->
                 archive.update { it?.copy(loading = false, entries = entries, password = password) }
             }.onFailure { e ->
@@ -841,6 +1017,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ExtractChoice.OWN_FOLDER -> runExtract(OpRequest.Extract(a.path, parent, a.password, selection, strip, smartFolder = true))
             ExtractChoice.CHOOSE -> choosePlaceForExtract(a.path, a.password, selection, strip, count)
         }
+    }
+
+    override fun onCleared() {
+        releaseViewerArchive()
+        player.close()
+        super.onCleared()
     }
 
     // ------------------------------------------------------------------ messages

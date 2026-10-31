@@ -304,7 +304,7 @@ fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel:
 
         Panel.INFO -> Sheet(stringResource(R.string.action_details), close) {
             val item = s.current ?: return@Sheet
-            val size by produceState<Long?>(null, item.path) { value = withContext(Dispatchers.IO) { File(item.path).length() } }
+            val size by produceState<Long?>(null, item.path) { value = withContext(Dispatchers.IO) { com.offlinefiles.explorer.data.Stores.storeFor(item.path).stat(item.path)?.size } }
             Info(stringResource(R.string.props_name), item.name)
             Info(stringResource(R.string.props_location), File(item.path).parent.orEmpty())
             size?.let { Info(stringResource(R.string.props_size), Format.size(context, it)) }

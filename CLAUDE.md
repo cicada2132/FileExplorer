@@ -8,7 +8,7 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 49 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 61 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
@@ -28,12 +28,23 @@ User-facing docs (Korean) are in `README.md`.
 - `ops/` background operations; `ui/` Compose screens (`browser`, `gallery`, `home`, `archive`, `settings`, `dialogs`, `player`)
 - `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` owns the framework `MediaPlayer` (no ExoPlayer/libVLC: no new libraries)
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `PlayerCoreTest` 8, `PlayerFlowTest` 4
+  `StoreOpsTest` 6, `UsbStorageTest` 4, `UsbFlowTest` 2, `PlayerCoreTest` 8, `PlayerFlowTest` 4
+
+## USB drives
+
+- Many devices (Pixel, AOSP) mount USB drives where apps can't reach them by path; `StorageVolumes` reports those as
+  `VolumeAccess.NEEDS_GRANT` (path `/mnt/media_rw/<uuid>`, used only as a name). The user grants the drive root in the
+  system picker; after that it is `DOCUMENTS` and `data/DocumentTree.kt` serves it through the external storage
+  provider (document id = `<uuid>:<path on drive>`). Drives readable by path stay `PATH` (Samsung etc.).
+- `data/Stores` maps a path to its `core/FileStore`: a `DocumentTree` or `LocalStore`. Work touching only local files
+  keeps using `FileOps`/`ArchiveOps` unchanged; anything involving a document tree goes through `core/StoreOps`
+  (same rules as `FileOps`), and archive work through `ops/DocumentStaging` (cache copies).
+- Tests fake the provider with `FakeDriveProvider` (a host folder) and Robolectric's `StorageVolumeBuilder`.
 
 ## Screenshots
 
-`AppFlowTest` / `GalleryFlowTest` / `PlayerFlowTest` rewrite `app/screenshots/*.png` on every test run (00–30 file manager,
-40–48 gallery, 50–56 player). After UI changes, open the changed ones and check layout and Korean/English text, then
+`AppFlowTest` / `GalleryFlowTest` / `UsbFlowTest` / `PlayerFlowTest` rewrite `app/screenshots/*.png` on every test run
+(00–30 file manager, 40–48 gallery, 50–55 USB, 60–66 player). After UI changes, open the changed ones and check layout and Korean/English text, then
 commit them with the change. Unrelated diffs are usually only the clock/date shown on screen.
 Video thumbnails show a placeholder under Robolectric (no video decoding); check those on a device.
 The player screenshots have a black video area for the same reason (Robolectric's `ShadowMediaPlayer` prepares and

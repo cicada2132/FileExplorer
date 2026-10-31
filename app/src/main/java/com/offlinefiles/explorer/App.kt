@@ -3,6 +3,8 @@ package com.offlinefiles.explorer
 import android.app.Application
 import com.offlinefiles.explorer.data.PlayerStore
 import com.offlinefiles.explorer.data.Prefs
+import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.ops.DocumentStaging
 import com.offlinefiles.explorer.ops.OperationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +21,10 @@ class App : Application() {
     lateinit var playerStore: PlayerStore
         private set
 
+    /** Cache copies for archive work on USB drives that are opened through the system file picker. */
+    lateinit var staging: DocumentStaging
+        private set
+
     /** Where single files are unpacked when opened straight from an archive. */
     val openCacheDir: File get() = File(cacheDir, "opened")
 
@@ -27,7 +33,11 @@ class App : Application() {
         prefs = Prefs(this)
         operations = OperationManager(appScope)
         playerStore = PlayerStore(this)
-        appScope.launch(Dispatchers.IO) { trimOpenCache() }
+        staging = DocumentStaging(File(cacheDir, "usb"), Stores)
+        appScope.launch(Dispatchers.IO) {
+            trimOpenCache()
+            staging.clearAll()
+        }
     }
 
     private fun trimOpenCache() {

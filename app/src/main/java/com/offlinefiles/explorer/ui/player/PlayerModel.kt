@@ -30,6 +30,7 @@ import com.offlinefiles.explorer.core.player.RotationMode
 import com.offlinefiles.explorer.core.player.SubtitleTrack
 import com.offlinefiles.explorer.core.player.Subtitles
 import com.offlinefiles.explorer.data.PlayerStore
+import com.offlinefiles.explorer.data.Stores
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -257,7 +258,9 @@ class PlayerModel(
             }
         }
         try {
-            mp.setDataSource(item.path)
+            // USB drives opened through the system picker have no file paths: play through the provider.
+            val tree = Stores.tree(item.path)
+            if (tree != null) mp.setDataSource(context, tree.documentUri(item.path)) else mp.setDataSource(item.path)
             if (item.isVideo) surface?.let { mp.setSurface(it) }
             mp.prepareAsync()
         } catch (e: Exception) {
@@ -622,7 +625,7 @@ class PlayerModel(
     /** Tags, artwork and the subtitle files next to the video, read off the main thread. */
     private fun loadSidecars(item: PlayItem, id: Long, resumeAt: Long?) {
         sidecarJob = scope.launch {
-            if (item.isVideo) {
+            if (item.isVideo && !Stores.isDocument(item.path)) {
                 val file = File(item.path)
                 val found = withContext(Dispatchers.IO) {
                     val all = Subtitles.findFor(file, file.parentFile?.listFiles()?.toList().orEmpty())
@@ -648,8 +651,9 @@ class PlayerModel(
 
     private fun readMeta(item: PlayItem, resumeAt: Long?): MediaMeta? {
         val r = MediaMetadataRetriever()
+        val pfd = Stores.tree(item.path)?.let { it.openFile(item.path) ?: return null }
         return try {
-            r.setDataSource(item.path)
+            if (pfd != null) r.setDataSource(pfd.fileDescriptor) else r.setDataSource(item.path)
             fun tag(key: Int) = r.extractMetadata(key)?.trim()?.ifBlank { null }
             val picture = if (item.isVideo) {
                 val us = (resumeAt ?: 0L) * 1000
@@ -673,6 +677,7 @@ class PlayerModel(
             null
         } finally {
             runCatching { r.release() }
+            runCatching { pfd?.close() }
         }
     }
 

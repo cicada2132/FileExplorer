@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -59,14 +60,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.offlinefiles.explorer.R
 import com.offlinefiles.explorer.core.DirStats
+import com.offlinefiles.explorer.core.FileItem
 import com.offlinefiles.explorer.core.FileOps
 import com.offlinefiles.explorer.core.NameError
 import com.offlinefiles.explorer.core.SortField
 import com.offlinefiles.explorer.core.SortSpec
+import com.offlinefiles.explorer.core.StoreOps
 import com.offlinefiles.explorer.core.archive.ArchiveFormats
 import com.offlinefiles.explorer.core.archive.ArchiveType
 import com.offlinefiles.explorer.core.archive.CompressionLevel
 import com.offlinefiles.explorer.data.MimeTypes
+import com.offlinefiles.explorer.data.StorageVolumes
+import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.data.VolumeInfo
 import com.offlinefiles.explorer.ui.DialogState
 import com.offlinefiles.explorer.ui.MainViewModel
 import com.offlinefiles.explorer.ui.components.Format
@@ -83,12 +89,11 @@ fun DialogHost(vm: MainViewModel) {
     when (val d = state) {
         null -> Unit
         is DialogState.NewFolder -> {
-            val initial = remember(d) { FileOps.uniqueChild(File(d.parent), context.getString(R.string.default_folder_name), true).name }
+            val initial = remember(d) { vm.freeName(d.parent, context.getString(R.string.default_folder_name), true) }
             NameDialog(
                 title = stringResource(R.string.action_new_folder),
                 initial = initial,
-                parent = File(d.parent),
-                originalPath = null,
+                taken = { vm.nameTaken(d.parent, it) },
                 isDirectory = true,
                 confirmLabel = stringResource(R.string.action_create),
                 onDismiss = close,
@@ -96,12 +101,11 @@ fun DialogHost(vm: MainViewModel) {
             )
         }
         is DialogState.NewFile -> {
-            val initial = remember(d) { FileOps.uniqueChild(File(d.parent), context.getString(R.string.default_file_name), false).name }
+            val initial = remember(d) { vm.freeName(d.parent, context.getString(R.string.default_file_name), false) }
             NameDialog(
                 title = stringResource(R.string.action_new_file),
                 initial = initial,
-                parent = File(d.parent),
-                originalPath = null,
+                taken = { vm.nameTaken(d.parent, it) },
                 isDirectory = false,
                 confirmLabel = stringResource(R.string.action_create),
                 onDismiss = close,
@@ -110,24 +114,32 @@ fun DialogHost(vm: MainViewModel) {
         }
         is DialogState.Rename -> {
             val f = File(d.path)
+            val parent = f.parent ?: "/"
             NameDialog(
                 title = stringResource(R.string.action_rename),
                 initial = f.name,
-                parent = f.parentFile ?: File("/"),
-                originalPath = d.path,
-                isDirectory = f.isDirectory,
+                taken = { vm.nameTaken(parent, it, d.path) },
+                isDirectory = remember(d) { vm.isFolder(d.path) },
                 confirmLabel = stringResource(R.string.action_rename),
                 onDismiss = close,
                 onConfirm = { vm.rename(d.path, it) },
             )
         }
         is DialogState.ConfirmDelete -> DeleteDialog(d.paths, onDismiss = close, onConfirm = { vm.delete(d.paths) })
-        is DialogState.Properties -> PropertiesDialog(d.paths, onDismiss = close)
+        is DialogState.Properties -> {
+            val volumes by vm.volumes.collectAsStateWithLifecycle()
+            PropertiesDialog(d.paths, volumes, onDismiss = close)
+        }
         DialogState.Sort -> {
             val settings by vm.settings.collectAsStateWithLifecycle()
             SortDialog(settings.sort, onChange = vm::setSort, onDismiss = close)
         }
-        is DialogState.Compress -> CompressDialog(d.paths, onDismiss = close) { name, type, level, pw ->
+        is DialogState.Compress -> CompressDialog(
+            d.paths,
+            taken = { parent, name -> vm.nameTaken(parent, name) },
+            isFolder = vm::isFolder,
+            onDismiss = close,
+        ) { name, type, level, pw ->
             vm.compress(d.paths, name, type, level, pw)
         }
         is DialogState.Password -> PasswordDialog(File(d.archive).name, d.wrong, onDismiss = close, onSubmit = d.onSubmit)
@@ -139,15 +151,29 @@ fun DialogHost(vm: MainViewModel) {
         is DialogState.ArchiveActions -> ArchiveActionsSheet(vm, d.item, onDismiss = close)
         is DialogState.ArchiveExtract -> ArchiveExtractSheet(vm, d.selection, d.stripPrefix, onDismiss = close)
         is DialogState.MediaInfo -> MediaInfoSheet(d.item, onDismiss = close)
+        is DialogState.UsbAccess -> UsbAccessDialog(d.volume.label, onDismiss = close, onContinue = { vm.requestAccess(d.volume) })
     }
 }
 
+/** Says what the system file picker is about to ask, so "Use this folder" isn't a surprise. */
+@Composable
+fun UsbAccessDialog(label: String, onDismiss: () -> Unit, onContinue: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Filled.Usb, null) },
+        title = { Text(stringResource(R.string.usb_access_title)) },
+        text = { Text(stringResource(R.string.usb_access_body, label)) },
+        confirmButton = { TextButton(onClick = onContinue) { Text(stringResource(R.string.usb_access_continue)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
+}
+
+/** Name entry for new and renamed items; [taken] says whether a name is already used there. */
 @Composable
 fun NameDialog(
     title: String,
     initial: String,
-    parent: File,
-    originalPath: String?,
+    taken: (String) -> Boolean,
     isDirectory: Boolean,
     confirmLabel: String,
     onDismiss: () -> Unit,
@@ -163,11 +189,7 @@ fun NameDialog(
         NameError.INVALID_CHARS -> stringResource(R.string.name_invalid_chars)
         NameError.RESERVED -> stringResource(R.string.name_reserved)
         NameError.TOO_LONG -> stringResource(R.string.name_too_long)
-        null -> {
-            val target = File(parent, name)
-            val clash = target.exists() && (originalPath == null || !FileOps.isSameFile(File(originalPath), target))
-            if (clash) stringResource(R.string.name_exists) else null
-        }
+        null -> if (taken(name)) stringResource(R.string.name_exists) else null
     }
     val canConfirm = name.isNotEmpty() && error == null
     AlertDialog(
@@ -333,6 +355,8 @@ fun OpenAsDialog(onDismiss: () -> Unit, onPick: (String) -> Unit) {
 @Composable
 fun CompressDialog(
     paths: List<String>,
+    taken: (parent: String, name: String) -> Boolean,
+    isFolder: (String) -> Boolean,
     onDismiss: () -> Unit,
     onConfirm: (String, ArchiveType, CompressionLevel, CharArray?) -> Unit,
 ) {
@@ -340,7 +364,7 @@ fun CompressDialog(
     val parent = files.first().parentFile ?: File("/")
     val defaultBase = remember(paths) {
         val f = files.first()
-        val base = if (files.size == 1) FileOps.splitName(f.name, f.isDirectory).first else parent.name.ifEmpty { "archive" }
+        val base = if (files.size == 1) FileOps.splitName(f.name, isFolder(f.path)).first else parent.name.ifEmpty { "archive" }
         base.ifBlank { "archive" }
     }
     var name by remember { mutableStateOf(TextFieldValue(defaultBase, TextRange(0, defaultBase.length))) }
@@ -357,7 +381,7 @@ fun CompressDialog(
         NameError.INVALID_CHARS -> stringResource(R.string.name_invalid_chars)
         NameError.TOO_LONG -> stringResource(R.string.name_too_long)
         NameError.RESERVED -> stringResource(R.string.name_reserved)
-        else -> if (base.isNotEmpty() && File(parent, fullName).exists()) stringResource(R.string.name_exists) else null
+        else -> if (base.isNotEmpty() && taken(parent.path, fullName)) stringResource(R.string.name_exists) else null
     }
     val pwError = usePassword && pw2.isNotEmpty() && pw != pw2
     val canConfirm = base.isNotEmpty() && nameError == null && (!usePassword || (pw.isNotEmpty() && pw == pw2))
@@ -461,7 +485,11 @@ fun CompressDialog(
 }
 
 @Composable
-fun PropertiesDialog(paths: List<String>, onDismiss: () -> Unit) {
+fun PropertiesDialog(paths: List<String>, volumes: List<VolumeInfo>, onDismiss: () -> Unit) {
+    if (paths.any(Stores::isDocument)) {
+        DocumentPropertiesDialog(paths, volumes, onDismiss)
+        return
+    }
     val context = LocalContext.current
     val files = remember(paths) { paths.map(::File) }
     val single = files.singleOrNull()
@@ -516,6 +544,11 @@ fun PropertiesDialog(paths: List<String>, onDismiss: () -> Unit) {
         }
     }
 
+    PropertiesRows(rows, onDismiss)
+}
+
+@Composable
+private fun PropertiesRows(rows: List<Pair<Int, String>>, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.action_properties)) },
@@ -533,4 +566,63 @@ fun PropertiesDialog(paths: List<String>, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } },
     )
+}
+
+/** Properties of items on a USB drive opened through the system file picker (no file paths there). */
+@Composable
+private fun DocumentPropertiesDialog(paths: List<String>, volumes: List<VolumeInfo>, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var items by remember { mutableStateOf<List<FileItem>>(emptyList()) }
+    var stats by remember { mutableStateOf<DirStats?>(null) }
+    var done by remember { mutableStateOf(false) }
+    LaunchedEffect(paths) {
+        withContext(Dispatchers.IO) {
+            val found = paths.mapNotNull { p -> Stores.storeFor(p).stat(p) }
+            items = found
+            var acc = DirStats()
+            for (item in found) {
+                val base = acc
+                val s = StoreOps.measureTree(Stores.storeFor(item.path), item) { partial ->
+                    stats = DirStats(base.files + partial.files, base.folders + partial.folders, base.bytes + partial.bytes)
+                }
+                acc = DirStats(acc.files + s.files, acc.folders + s.folders, acc.bytes + s.bytes)
+                stats = acc
+            }
+            done = true
+        }
+    }
+    /** "SanDisk USB drive/DCIM" rather than the drive's hidden mount point. */
+    fun location(parent: String): String {
+        val v = StorageVolumes.volumeFor(parent, volumes) ?: return parent
+        return v.label + parent.removePrefix(v.path)
+    }
+    val sizeText = stats?.let { s ->
+        val bytes = context.getString(R.string.props_bytes, "%,d".format(s.bytes))
+        "${Format.size(context, s.bytes)} ($bytes)" + if (!done) " …" else ""
+    } ?: stringResource(R.string.props_calculating)
+    val single = items.singleOrNull()?.takeIf { paths.size == 1 }
+    val rows = buildList {
+        if (single != null) {
+            add(R.string.props_name to single.name)
+            add(R.string.props_location to location(File(single.path).parent ?: "/"))
+            if (single.isDirectory) {
+                add(R.string.props_type to context.getString(R.string.props_type_folder))
+                add(R.string.props_size to sizeText)
+                stats?.let { s -> add(R.string.props_contents to context.getString(R.string.props_contents_value, s.files, s.folders)) }
+            } else {
+                val ext = ArchiveFormats.typeOf(single.name)?.let { " (${it.extension.uppercase()})" } ?: ""
+                add(R.string.props_type to MimeTypes.of(single.name) + ext)
+                add(R.string.props_size to "${Format.size(context, single.size)} (${context.getString(R.string.props_bytes, "%,d".format(single.size))})")
+            }
+            add(R.string.props_modified to Format.dateTime(context, single.lastModified))
+            if (single.isHidden) add(R.string.props_hidden to context.getString(R.string.props_yes))
+        } else {
+            add(R.string.props_selected to context.getString(R.string.props_selected_value, paths.size))
+            val parents = paths.mapNotNull { File(it).parent }.distinct()
+            if (parents.size == 1) add(R.string.props_location to location(parents[0]))
+            add(R.string.props_size to sizeText)
+            stats?.let { s -> add(R.string.props_contents to context.getString(R.string.props_contents_value, s.files, s.folders)) }
+        }
+    }
+    PropertiesRows(rows, onDismiss)
 }

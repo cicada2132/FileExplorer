@@ -177,6 +177,14 @@ object ArchiveOps {
         return OperationResult(succeeded, skipped, failures, topLevel.filter { it.exists() })
     }
 
+    /** The one folder everything in the archive sits in, if there is one ("Extract to folder" skips a level then). */
+    fun singleTopFolder(entries: List<ArchiveEntryInfo>): String? {
+        val tops = entries.mapTo(HashSet()) { it.path.substringBefore('/') }
+        val single = tops.singleOrNull() ?: return null
+        val isFolder = entries.any { it.path.startsWith("$single/") || (it.path == single && it.isDirectory) }
+        return if (isFolder) single else null
+    }
+
     // ------------------------------------------------------------------ compress
 
     suspend fun compress(
