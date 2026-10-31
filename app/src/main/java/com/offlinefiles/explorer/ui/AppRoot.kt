@@ -1,6 +1,8 @@
 package com.offlinefiles.explorer.ui
 
 import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
@@ -31,7 +33,6 @@ import com.offlinefiles.explorer.ui.permission.PermissionScreen
 import com.offlinefiles.explorer.ui.settings.LicensesScreen
 import com.offlinefiles.explorer.ui.settings.SettingsScreen
 import com.offlinefiles.explorer.ui.theme.FileExplorerTheme
-import java.io.File
 
 @Composable
 fun AppRoot(vm: MainViewModel) {
@@ -72,6 +73,10 @@ fun AppRoot(vm: MainViewModel) {
             return@FileExplorerTheme
         }
 
+        // The system file picker, for USB drives Android only shares with apps the user allows there.
+        val accessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            vm.onAccessResult(if (result.resultCode == Activity.RESULT_OK) result.data?.data else null)
+        }
         val snackbar = remember { SnackbarHostState() }
         LaunchedEffect(Unit) {
             vm.messages.collect { text ->
@@ -83,14 +88,18 @@ fun AppRoot(vm: MainViewModel) {
             vm.events.collect { e ->
                 when (e) {
                     is UiEvent.Open -> {
-                        val ok = FileIntents.open(context, File(e.path), e.mime, e.chooser)
+                        val ok = FileIntents.open(context, e.path, e.mime, e.chooser)
                         if (!ok) {
                             if (e.mime == null) vm.showDialog(DialogState.OpenAs(e.path)) else vm.message(R.string.msg_no_app)
                         }
                     }
-                    is UiEvent.Share -> FileIntents.share(context, e.paths.map(::File))
+                    is UiEvent.Share -> FileIntents.share(context, e.paths)
                     is UiEvent.ScrollTo -> vm.pendingScroll.value = e.path
-                    is UiEvent.SetAs -> if (!FileIntents.setAs(context, File(e.path), e.mime)) vm.message(R.string.msg_no_app)
+                    is UiEvent.SetAs -> if (!FileIntents.setAs(context, e.path, e.mime)) vm.message(R.string.msg_no_app)
+                    is UiEvent.RequestAccess -> {
+                        val started = runCatching { accessLauncher.launch(e.intent) }.isSuccess
+                        if (!started) vm.message(R.string.msg_no_picker)
+                    }
                 }
             }
         }

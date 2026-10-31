@@ -5,6 +5,7 @@ import android.os.Build
 import com.offlinefiles.explorer.core.gallery.GalleryIndex
 import com.offlinefiles.explorer.core.gallery.MediaItem
 import com.offlinefiles.explorer.data.MediaLibrary
+import com.offlinefiles.explorer.data.Stores
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -126,7 +127,7 @@ class GalleryModel(private val context: Context, private val scope: CoroutineSco
     fun onRemoved(paths: Collection<String>) {
         if (paths.isEmpty()) return
         scope.launch {
-            val gone = withContext(Dispatchers.IO) { paths.filterNot { File(it).exists() } }
+            val gone = withContext(Dispatchers.IO) { paths.filterNot { Stores.exists(it) } }
             if (gone.isNotEmpty()) {
                 val now = System.currentTimeMillis()
                 gone.forEach { removed[it] = now }

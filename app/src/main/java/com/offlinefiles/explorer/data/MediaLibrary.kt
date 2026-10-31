@@ -40,7 +40,7 @@ object MediaLibrary {
 
     /** Slow fallback: walk every storage volume like the media scanner would. */
     fun scanFolders(context: Context): List<MediaItem> =
-        MediaScan.scan(StorageVolumes.list(context).map { File(it.path) })
+        MediaScan.scan(StorageVolumes.list(context).filter { it.access == VolumeAccess.PATH }.map { File(it.path) })
 
     /** Null when the media provider isn't available (or refuses); an empty list means "no media". */
     fun query(context: Context): List<MediaItem>? {
