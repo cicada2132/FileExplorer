@@ -122,7 +122,7 @@ object MediaDecode {
         return rotated
     }
 
-    /** A still frame for a video page (the video itself plays in another app for now). */
+    /** A still frame for a video page in the photo viewer (the play button opens the player). */
     fun videoFrame(item: MediaItem, maxSide: Int): Bitmap? {
         Stores.tree(item.path)?.let { return DocumentMedia.videoFrame(it, item.path, maxSide) }
         val file = File(item.path)

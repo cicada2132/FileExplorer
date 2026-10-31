@@ -1,6 +1,7 @@
 package com.offlinefiles.explorer
 
 import android.app.Application
+import com.offlinefiles.explorer.data.PlayerStore
 import com.offlinefiles.explorer.data.Prefs
 import com.offlinefiles.explorer.data.Stores
 import com.offlinefiles.explorer.ops.DocumentStaging
@@ -17,6 +18,8 @@ class App : Application() {
         private set
     lateinit var operations: OperationManager
         private set
+    lateinit var playerStore: PlayerStore
+        private set
 
     /** Cache copies for archive work on USB drives that are opened through the system file picker. */
     lateinit var staging: DocumentStaging
@@ -29,6 +32,7 @@ class App : Application() {
         super.onCreate()
         prefs = Prefs(this)
         operations = OperationManager(appScope)
+        playerStore = PlayerStore(this)
         staging = DocumentStaging(File(cacheDir, "usb"), Stores)
         appScope.launch(Dispatchers.IO) {
             trimOpenCache()

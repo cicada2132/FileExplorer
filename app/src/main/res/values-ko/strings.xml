@@ -247,6 +247,75 @@
     <string name="settings_storage">저장소</string>
     <string name="settings_usb_access">저장소 접근 권한 해제</string>
     <string name="settings_usb_access_desc">시스템 파일 선택 화면에서 허용한 USB 저장소가 다시 허용을 요청합니다</string>
+    <string name="settings_player">플레이어</string>
+    <string name="settings_player_in_app">동영상·음악을 앱에서 재생</string>
+    <string name="settings_player_in_app_desc">파일 목록이나 갤러리에서 동영상·음악을 누르면 내장 플레이어로 재생합니다</string>
+    <string name="settings_resume">이어서 재생</string>
+    <string name="settings_resume_desc">동영상(과 10분이 넘는 음성 파일)을 마지막으로 본 위치부터 재생합니다</string>
+    <string name="action_pause">일시정지</string>
+    <string name="player_next">다음</string>
+    <string name="player_previous">이전</string>
+    <string name="player_replay">다시 재생</string>
+    <string name="player_next_file">다음 파일</string>
+    <string name="player_lock">조작 잠금</string>
+    <string name="player_unlock">눌러서 잠금 해제</string>
+    <string name="player_subtitles">자막</string>
+    <string name="player_audio">오디오 트랙</string>
+    <string name="player_rotate">화면 회전</string>
+    <string name="player_queue">재생 목록</string>
+    <string name="player_aspect">화면 맞춤</string>
+    <string name="player_brightness">밝기</string>
+    <string name="player_volume">볼륨</string>
+    <string name="player_zoom">확대 %d%%</string>
+    <string name="player_on">켜짐</string>
+    <string name="player_off">끄기</string>
+    <string name="player_speed">재생 속도</string>
+    <string name="player_speed_hint">동영상을 길게 누르고 있으면 누르는 동안 2배속으로 재생합니다.</string>
+    <string name="player_repeat">반복</string>
+    <string name="repeat_one">한 개 반복</string>
+    <string name="repeat_all">전체 반복</string>
+    <string name="player_shuffle">무작위 재생</string>
+    <string name="player_ab">구간 반복 (A-B)</string>
+    <string name="player_ab_set_a">시작 지점(A) 지정</string>
+    <string name="player_ab_set_b">끝 지점(B) 지정</string>
+    <string name="player_ab_clear">해제</string>
+    <string name="player_ab_a_marked">시작 지점(A)을 지정했습니다</string>
+    <string name="player_ab_b_marked">A–B 구간을 반복합니다</string>
+    <string name="player_ab_cleared">구간 반복을 해제했습니다</string>
+    <string name="player_ab_too_short">조금 더 재생한 뒤 끝 지점(B)을 지정하세요</string>
+    <string name="player_sleep">취침 타이머</string>
+    <string name="player_sleep_end_of_file">현재 파일이 끝나면</string>
+    <string name="player_sleep_end_short">파일 끝</string>
+    <string name="player_sleep_remaining">%s 후 일시정지</string>
+    <string name="player_sleep_done">취침 타이머: 재생을 멈췄습니다</string>
+    <string name="player_pip">PIP 모드</string>
+    <string name="player_open_other">다른 앱으로 열기</string>
+    <string name="player_info_format">형식</string>
+    <string name="player_info_artist">아티스트</string>
+    <string name="player_info_album">앨범</string>
+    <string name="player_subtitle_embedded">내장 · %s</string>
+    <string name="player_subtitle_none">자막이 없습니다. 동영상과 같은 폴더에 .srt, .smi, .vtt, .ass 파일을 두세요(이름이 같으면 자동으로 켜집니다).</string>
+    <string name="player_subtitle_size">크기</string>
+    <string name="player_subtitle_sync">싱크</string>
+    <string name="player_subtitle_sync_hint">+는 자막을 늦게, −는 빠르게 표시합니다. 값을 누르면 초기화됩니다.</string>
+    <string name="player_delay_value">%s초</string>
+    <string name="player_subtitle_unreadable">자막 파일을 읽을 수 없습니다</string>
+    <string name="player_single_audio">오디오 트랙이 하나뿐입니다.</string>
+    <string name="player_track_n">트랙 %d</string>
+    <string name="player_track_failed">트랙을 바꾸지 못했습니다</string>
+    <string name="player_resumed">%s부터 이어서 재생</string>
+    <string name="player_start_over">처음부터</string>
+    <string name="player_error_title">내장 플레이어로 재생할 수 없는 파일입니다</string>
+    <string name="player_error_body">이 기기가 지원하지 않는 형식이거나 파일이 손상되었습니다.</string>
+    <string name="aspect_fit">화면에 맞춤</string>
+    <string name="aspect_fill">잘라서 채우기</string>
+    <string name="aspect_stretch">늘리기</string>
+    <string name="aspect_original">원본 크기</string>
+    <string name="aspect_16_9">16:9</string>
+    <string name="aspect_4_3">4:3</string>
+    <string name="rotation_auto">회전: 동영상 방향</string>
+    <string name="rotation_landscape">회전: 가로</string>
+    <string name="rotation_portrait">회전: 세로</string>
     <plurals name="item_count">
         <item quantity="other">항목 %d개</item>
     </plurals>
@@ -273,5 +342,11 @@
     </plurals>
     <plurals name="gallery_albums">
         <item quantity="other">앨범 %d개</item>
+    </plurals>
+    <plurals name="player_seconds">
+        <item quantity="other">%d초</item>
+    </plurals>
+    <plurals name="player_minutes">
+        <item quantity="other">%d분</item>
     </plurals>
 </resources>
