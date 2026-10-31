@@ -14,7 +14,11 @@ import android.os.Build
 import android.util.Size
 import androidx.annotation.RequiresApi
 import com.offlinefiles.explorer.core.gallery.MediaItem
+import com.offlinefiles.explorer.data.DocumentTree
+import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.ui.components.DocumentMedia
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -45,11 +49,12 @@ object MediaDecode {
 
     /** The picture scaled to fit [maxSide] on its long side, rotated as its EXIF data says. */
     fun full(item: MediaItem, maxSide: Int): Decoded {
+        Stores.tree(item.path)?.let { return fullFromDocument(it, item, maxSide) }
         val file = File(item.path)
         if (!file.isFile) return Decoded.Failed
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
-                return withImageDecoder(file, maxSide)
+                return withImageDecoder(ImageDecoder.createSource(file), file.name, maxSide)
             } catch (e: Exception) {
                 // Fall through to BitmapFactory (some files decode there but not in ImageDecoder).
             } catch (e: OutOfMemoryError) {
@@ -65,9 +70,22 @@ object MediaDecode {
         }
     }
 
+    /** A picture on a USB drive opened through the system file picker. */
+    private fun fullFromDocument(tree: DocumentTree, item: MediaItem, maxSide: Int): Decoded {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                return withImageDecoder(ImageDecoder.createSource(tree.resolver, tree.documentUri(item.path)), item.name, maxSide)
+            } catch (e: Exception) {
+                // Fall through to BitmapFactory.
+            } catch (e: OutOfMemoryError) {
+                return Decoded.Failed
+            }
+        }
+        return DocumentMedia.image(tree, item.path, maxSide, fitLongSide = true)?.let { Decoded.Still(it) } ?: Decoded.Failed
+    }
+
     @RequiresApi(Build.VERSION_CODES.P)
-    private fun withImageDecoder(file: File, maxSide: Int): Decoded {
-        val source = ImageDecoder.createSource(file)
+    private fun withImageDecoder(source: ImageDecoder.Source, name: String, maxSide: Int): Decoded {
         val listener = ImageDecoder.OnHeaderDecodedListener { decoder, info, _ ->
             val w = info.size.width
             val h = info.size.height
@@ -78,7 +96,7 @@ object MediaDecode {
             }
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
         }
-        val ext = file.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         if (ext == "gif" || ext == "webp") {
             when (val d = ImageDecoder.decodeDrawable(source, listener)) {
                 is AnimatedImageDrawable -> return Decoded.Animated(d)
@@ -106,6 +124,7 @@ object MediaDecode {
 
     /** A still frame for a video page (the video itself plays in another app for now). */
     fun videoFrame(item: MediaItem, maxSide: Int): Bitmap? {
+        Stores.tree(item.path)?.let { return DocumentMedia.videoFrame(it, item.path, maxSide) }
         val file = File(item.path)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             runCatching { ThumbnailUtils.createVideoThumbnail(file, Size(maxSide, maxSide), null) }.getOrNull()?.let { return it }
@@ -135,11 +154,15 @@ object MediaDecode {
         var exposure: String? = null
         var lat: Double? = null
         var lon: Double? = null
+        // Files on a USB drive opened through the system file picker are read through the provider.
+        val tree = Stores.tree(item.path)
         if (item.isVideo) {
             if (w <= 0 || h <= 0 || duration <= 0) {
                 val r = MediaMetadataRetriever()
+                val pfd = tree?.openFile(item.path)
                 try {
-                    r.setDataSource(item.path)
+                    if (tree == null) r.setDataSource(item.path)
+                    else r.setDataSource((pfd ?: throw FileNotFoundException(item.path)).fileDescriptor)
                     val vw = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
                     val vh = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
                     val rotation = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
@@ -153,17 +176,19 @@ object MediaDecode {
                     // Unreadable or unsupported video: show what we know.
                 } finally {
                     runCatching { r.release() }
+                    runCatching { pfd?.close() }
                 }
             }
         } else {
             val exif = try {
-                ExifInterface(item.path)
+                if (tree == null) ExifInterface(item.path) else tree.openInput(item.path).use { ExifInterface(it) }
             } catch (e: Exception) {
                 null
             }
             if (w <= 0 || h <= 0) {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(item.path, bounds)
+                if (tree == null) BitmapFactory.decodeFile(item.path, bounds)
+                else runCatching { tree.openInput(item.path).use { BitmapFactory.decodeStream(it, null, bounds) } }
                 if (bounds.outWidth > 0 && bounds.outHeight > 0) {
                     val swap = exif != null && rotationOf(exif).let { it == 90 || it == 270 }
                     w = if (swap) bounds.outHeight else bounds.outWidth

@@ -51,16 +51,20 @@ object MimeTypes {
     }
 }
 
-/** Hands files to other apps through content:// URIs (never raw file paths). */
+/**
+ * Hands files to other apps through content:// URIs (never raw file paths). Files on USB drives
+ * opened through the system file picker go out with their document URIs.
+ */
 object FileIntents {
-    private fun uriFor(context: Context, file: File): Uri =
-        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    private fun uriFor(context: Context, path: String): Uri =
+        Stores.tree(path)?.documentUri(path)
+            ?: FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(path))
 
     /** Returns false when no installed app can open this type, so the caller can offer "Open as". */
-    fun open(context: Context, file: File, mimeOverride: String? = null, chooser: Boolean = false): Boolean {
-        val mime = mimeOverride ?: MimeTypes.of(file.name)
+    fun open(context: Context, path: String, mimeOverride: String? = null, chooser: Boolean = false): Boolean {
+        val mime = mimeOverride ?: MimeTypes.of(File(path).name)
         val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uriFor(context, file), mime)
+            .setDataAndType(uriFor(context, path), mime)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         return try {
             context.startActivity(if (chooser) Intent.createChooser(intent, context.getString(R.string.action_open_with)) else intent)
@@ -72,11 +76,12 @@ object FileIntents {
         }
     }
 
-    fun share(context: Context, files: List<File>): Boolean {
-        val shareable = files.filter { it.isFile }
+    /** Folders are left out; paths on USB document trees were checked by the caller. */
+    fun share(context: Context, paths: List<String>): Boolean {
+        val shareable = paths.filter { Stores.isDocument(it) || File(it).isFile }
         if (shareable.isEmpty()) return false
         val uris = shareable.map { uriFor(context, it) }
-        val types = shareable.map { MimeTypes.of(it.name) }.distinct()
+        val types = shareable.map { MimeTypes.of(File(it).name) }.distinct()
         val mime = when {
             types.size == 1 -> types[0]
             types.map { it.substringBefore('/') }.distinct().size == 1 -> types[0].substringBefore('/') + "/*"
@@ -99,10 +104,10 @@ object FileIntents {
     }
 
     /** "Use as" (wallpaper, contact photo…), offered by whichever apps handle it. */
-    fun setAs(context: Context, file: File, mimeOverride: String? = null): Boolean {
-        val mime = mimeOverride ?: MimeTypes.of(file.name)
+    fun setAs(context: Context, path: String, mimeOverride: String? = null): Boolean {
+        val mime = mimeOverride ?: MimeTypes.of(File(path).name)
         val intent = Intent(Intent.ACTION_ATTACH_DATA)
-            .setDataAndType(uriFor(context, file), mime)
+            .setDataAndType(uriFor(context, path), mime)
             .putExtra("mimeType", mime)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         return try {
@@ -113,13 +118,17 @@ object FileIntents {
         }
     }
 
-    /** Android 10 and older don't notice file changes by themselves; newer versions do. */
+    /**
+     * Android 10 and older don't notice file changes by themselves; newer versions do.
+     * Drives opened through the file picker aren't in the media library, so they're skipped.
+     */
     fun notifyMediaStore(context: Context, paths: Collection<String>) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R || paths.isEmpty()) return
-        val expanded = paths.flatMap { p ->
+        val expanded = paths.filterNot(Stores::isDocument).flatMap { p ->
             val f = File(p)
             if (f.isDirectory) f.walkTopDown().take(2000).map { it.path }.toList() else listOf(p)
         }
+        if (expanded.isEmpty()) return
         MediaScannerConnection.scanFile(context.applicationContext, expanded.toTypedArray(), null, null)
     }
 }

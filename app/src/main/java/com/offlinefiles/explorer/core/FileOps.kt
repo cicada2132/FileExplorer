@@ -406,7 +406,7 @@ object FileOps {
         targetModified = existing.lastModified(),
     )
 
-    private fun accessReason(dir: File?): FailureReason =
+    internal fun accessReason(dir: File?): FailureReason =
         if (dir != null && dir.exists() && !dir.canWrite()) FailureReason.ACCESS_DENIED else FailureReason.IO_ERROR
 
     internal fun reasonOf(e: Throwable, target: File?): FailureReason {

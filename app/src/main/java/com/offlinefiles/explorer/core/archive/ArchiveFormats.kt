@@ -81,6 +81,28 @@ object ArchiveFormats {
         return ArchiveVolumes(type, file, listOf(file))
     }
 
+    /**
+     * The files among [siblings] (names in the same folder) that make up the archive [name]:
+     * every part of a split archive, otherwise just [name] itself.
+     */
+    fun partNames(name: String, siblings: Collection<String>): List<String> {
+        sevenZSplit.find(name)?.let { m ->
+            val base = m.groupValues[1]
+            val parts = siblings.filter { s -> sevenZSplit.find(s)?.groupValues?.get(1)?.equals(base, ignoreCase = true) == true }
+            return (parts + name).distinct()
+        }
+        val zipBase = zipSplitPart.find(name)?.groupValues?.get(1)
+            ?: if (name.endsWith(".zip", ignoreCase = true)) name.dropLast(4) else null
+        if (zipBase != null) {
+            val parts = siblings.filter { s ->
+                zipSplitPart.find(s)?.groupValues?.get(1)?.equals(zipBase, ignoreCase = true) == true ||
+                    s.equals("$zipBase.zip", ignoreCase = true)
+            }
+            return (parts + name).distinct()
+        }
+        return listOf(name)
+    }
+
     /** Detects the format from the first bytes, so a mislabeled file still opens correctly. */
     fun sniff(file: File): ArchiveType? {
         val head = ByteArray(6)
