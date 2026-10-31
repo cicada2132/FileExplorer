@@ -179,7 +179,7 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
             val item = items.getOrNull(page)
             if (item != null) {
                 if (item.isVideo) {
-                    VideoPage(item, onTap = { chrome = !chrome }, onPlay = { vm.openMedia(item) })
+                    VideoPage(item, onTap = { chrome = !chrome }, onPlay = { vm.openMedia(item, items) })
                 } else {
                     ImagePage(
                         item = item,
@@ -193,7 +193,7 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
         }
         if (current != null) {
             ViewerTopBar(vm, current, chrome) { g.closeViewer(current.path) }
-            ViewerBottomBar(vm, current, chrome)
+            ViewerBottomBar(vm, current, chrome, onPlay = { vm.openMedia(current, items) })
         }
         SnackbarHost(
             snackbar,
@@ -564,7 +564,7 @@ private fun BoxScope.ViewerTopBar(vm: MainViewModel, item: MediaItem, visible: B
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible: Boolean) {
+private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible: Boolean, onPlay: () -> Unit) {
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier.align(Alignment.BottomCenter),
@@ -582,7 +582,7 @@ private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible
         ) {
             ViewerAction(Icons.Filled.Share, stringResource(R.string.action_share)) { vm.share(listOf(item.path)) }
             if (item.isVideo) {
-                ViewerAction(Icons.Filled.PlayArrow, stringResource(R.string.action_play)) { vm.openMedia(item) }
+                ViewerAction(Icons.Filled.PlayArrow, stringResource(R.string.action_play), onPlay)
             }
             ViewerAction(Icons.Filled.Info, stringResource(R.string.action_details)) { vm.showDialog(DialogState.MediaInfo(item)) }
             ViewerAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) {

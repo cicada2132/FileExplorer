@@ -30,9 +30,12 @@ import com.offlinefiles.explorer.ui.gallery.GalleryScreen
 import com.offlinefiles.explorer.ui.gallery.MediaViewerHost
 import com.offlinefiles.explorer.ui.home.HomeScreen
 import com.offlinefiles.explorer.ui.permission.PermissionScreen
+import com.offlinefiles.explorer.ui.player.PlayerHost
 import com.offlinefiles.explorer.ui.settings.LicensesScreen
 import com.offlinefiles.explorer.ui.settings.SettingsScreen
 import com.offlinefiles.explorer.ui.theme.FileExplorerTheme
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 @Composable
 fun AppRoot(vm: MainViewModel) {
@@ -43,8 +46,9 @@ fun AppRoot(vm: MainViewModel) {
             ThemeMode.LIGHT -> false
             ThemeMode.DARK -> true
         }
-        // The photo viewer is always black, so it wants light status bar icons.
-        val viewerOpen = vm.gallery.viewer.collectAsStateWithLifecycle().value != null
+        // The photo viewer and the player are always black, so they want light status bar icons.
+        val playerOpen by remember(vm) { vm.player.ui.map { it != null }.distinctUntilChanged() }.collectAsStateWithLifecycle(false)
+        val viewerOpen = vm.gallery.viewer.collectAsStateWithLifecycle().value != null || playerOpen
         val view = LocalView.current
         if (!view.isInEditMode) {
             SideEffect {
@@ -116,6 +120,7 @@ fun AppRoot(vm: MainViewModel) {
         }
         // Drawn over whichever screen opened it, so that screen keeps its scroll position.
         MediaViewerHost(vm, snackbar)
+        PlayerHost(vm, snackbar)
         DialogHost(vm)
         OperationHost(vm)
     }

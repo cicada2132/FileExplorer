@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.FolderCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Visibility
@@ -114,6 +116,13 @@ fun SettingsScreen(vm: MainViewModel) {
             }
             SwitchRow(Icons.Filled.PhotoLibrary, stringResource(R.string.settings_open_media), stringResource(R.string.settings_open_media_desc), s.openMediaInApp) { on ->
                 vm.updateSettings { it.copy(openMediaInApp = on) }
+            }
+            Section(stringResource(R.string.settings_player))
+            SwitchRow(Icons.Filled.PlayCircle, stringResource(R.string.settings_player_in_app), stringResource(R.string.settings_player_in_app_desc), s.playerInApp) { on ->
+                vm.updateSettings { it.copy(playerInApp = on) }
+            }
+            SwitchRow(Icons.Filled.History, stringResource(R.string.settings_resume), stringResource(R.string.settings_resume_desc), s.resumePlayback) { on ->
+                vm.updateSettings { it.copy(resumePlayback = on) }
             }
             // USB drives the user opened to the app in the system file picker.
             val context = LocalContext.current
