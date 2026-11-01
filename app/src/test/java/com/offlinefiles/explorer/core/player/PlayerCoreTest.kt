@@ -207,4 +207,22 @@ class PlayerCoreTest {
         assertFalse(Resume.applies(240_000, isVideo = false))
         assertTrue(Resume.applies(3_600_000, isVideo = false))
     }
+
+    @Test
+    fun brokenSubtitlesAndEngineChoice() {
+        // Out-of-range character references and missing ASS fields are skipped, not thrown.
+        assertEquals("a &#99999999; b", Subtitles.cleanMarkup("a &#99999999; b"))
+        assertEquals("가", Subtitles.cleanMarkup("&#44032;"))
+        val ass = "[Events]\nFormat: Layer, End, Text\nDialogue: 0,0:00:02.00,hello\n"
+        assertTrue(Subtitles.parseAss(ass).isEmpty())
+        val smi = File(tmp.root, "bad.smi").apply { writeText("<SAMI><BODY><SYNC Start=10><P>&#2147483647;</SAMI>") }
+        Subtitles.load(smi)
+
+        assertTrue(EngineChoice.prefersVlc("영화.AVI"))
+        assertTrue(EngineChoice.prefersVlc("clip.wmv"))
+        assertTrue(EngineChoice.prefersVlc("old.rmvb"))
+        assertFalse(EngineChoice.prefersVlc("movie.mp4"))
+        assertFalse(EngineChoice.prefersVlc("movie.mkv"))
+        assertFalse(EngineChoice.prefersVlc("noext"))
+    }
 }

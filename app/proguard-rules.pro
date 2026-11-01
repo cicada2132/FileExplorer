@@ -9,3 +9,7 @@
 
 # Keep exception class names readable in error reports.
 -keepnames class * extends java.lang.Throwable
+
+# libVLC: its native code calls back into these classes by name (JNI).
+-keep class org.videolan.libvlc.** { *; }
+-dontwarn org.videolan.libvlc.**

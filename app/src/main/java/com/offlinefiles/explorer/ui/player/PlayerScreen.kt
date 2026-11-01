@@ -491,10 +491,11 @@ private fun VideoLayer(p: PlayerModel, s: PlayerUi, zoom: Float, pan: Offset) {
                         override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
                             val sf = Surface(st)
                             surface = sf
-                            p.attachSurface(sf)
+                            p.attachSurface(sf, width, height)
                         }
 
-                        override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+                        override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) =
+                            p.surfaceSize(width, height)
 
                         override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
                             surface?.let {

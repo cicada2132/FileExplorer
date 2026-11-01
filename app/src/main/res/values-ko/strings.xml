@@ -272,6 +272,10 @@
     <string name="player_sleep_remaining">%s 후 일시정지</string>
     <string name="player_sleep_done">취침 타이머: 재생을 멈췄습니다</string>
     <string name="player_pip">PIP 모드</string>
+    <string name="player_engine">재생 엔진</string>
+    <string name="player_engine_system">Android 기본 (눌러서 VLC로 재생)</string>
+    <string name="player_engine_vlc">VLC (눌러서 Android 기본으로 재생)</string>
+    <string name="player_vlc_unavailable">이 기기에서는 VLC 엔진을 쓸 수 없습니다</string>
     <string name="player_open_other">다른 앱으로 열기</string>
     <string name="player_info_format">형식</string>
     <string name="player_info_artist">아티스트</string>
@@ -312,11 +316,12 @@
     <string name="msg_usb_pick_root">저장소 안의 폴더가 아니라 저장소 자체를 선택해 주세요</string>
     <string name="msg_usb_not_drive">접근을 허용할 저장소가 아닙니다</string>
     <string name="msg_usb_access_granted">“%s” 접근이 허용되었습니다</string>
-    <string name="msg_usb_unreadable">접근은 허용되었지만 저장소의 파일을 읽을 수 없습니다. 저장소를 뺐다가 다시 연결한 뒤 다시 시도해 주세요. 자세한 정보: 설정 › USB 연결 진단</string>
+    <string name="msg_usb_unreadable">접근은 허용되었지만 저장소의 파일을 읽을 수 없습니다. 저장소를 뺐다가 다시 연결한 뒤 다시 시도해 주세요. 자세한 정보: 설정 › 진단 정보</string>
     <string name="msg_usb_picker_cancelled">접근이 허용되지 않았습니다. 저장소를 눌러 다시 시도하세요.</string>
-    <string name="settings_usb_diag">USB 연결 진단</string>
-    <string name="settings_usb_diag_desc">저장소가 열리지 않으면 이 정보를 복사해서 보내 주세요</string>
+    <string name="settings_usb_diag">진단 정보</string>
+    <string name="settings_usb_diag_desc">마지막 오류 종료와 USB 저장소 정보입니다. 문제가 생기면 복사해서 보내 주세요</string>
     <string name="msg_diag_copied">진단 정보를 복사했습니다</string>
+    <string name="msg_crashed_last_time">지난번에 앱이 비정상 종료되었습니다. 자세한 정보: 설정 › 진단 정보</string>
     <string name="msg_usb_access_forgotten">저장소 접근 권한을 해제했습니다</string>
     <string name="msg_no_picker">이 기기에는 시스템 파일 선택 화면이 없습니다</string>
     <string name="settings_storage">저장소</string>

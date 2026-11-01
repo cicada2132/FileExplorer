@@ -11,8 +11,8 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * What happened the last few times a USB drive was opened to the app, plus how Android currently
- * describes the drives. Shown in Settings so a user can copy it when a drive won't open.
+ * The last crash, what happened the last few times a USB drive was opened to the app, and how
+ * Android currently describes the drives. Shown in Settings so a user can copy it when a drive won't open.
  * Kept on the device only (the app has no network access).
  */
 object UsbDiagnostics {
@@ -35,6 +35,9 @@ object UsbDiagnostics {
         appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         appendLine("Device ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         appendLine("All files access: ${StoragePermission.isGranted(context)}")
+        appendLine()
+        appendLine("[Last crash]")
+        appendLine(CrashLog.last(context) ?: "(none)")
         appendLine()
         appendLine("[System volumes]")
         val sm = context.getSystemService(StorageManager::class.java)

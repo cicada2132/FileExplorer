@@ -7,7 +7,7 @@
 
 코드를 수정해서 푸시할 때마다 GitHub Actions(`.github/workflows/apk.yml`)가 디버그 APK를 새로 만듭니다.
 
-- main 최신본: [FileExplorer-main.apk](https://github.com/cicada2132/FileExplorer/releases/download/apk-main/FileExplorer-main.apk)
+- main 최신본: [FileExplorer-main.apk](https://github.com/cicada2132/FileExplorer/releases/download/apk-main/FileExplorer-main.apk) (64비트 ARM, 대부분의 휴대폰). 오래된 32비트 기기·에뮬레이터는 같은 릴리스의 `-universal.apk`
 - 다른 브랜치: [Releases](https://github.com/cicada2132/FileExplorer/releases)의 `apk-<브랜치 이름>` (브랜치 이름의 `/`는 `-`로 바뀜)
 - 빌드 진행 상황: [Actions](https://github.com/cicada2132/FileExplorer/actions/workflows/apk.yml)
 
@@ -54,8 +54,10 @@
   - 자막: 동영상 옆의 .srt·.smi·.vtt·.ass 파일을 자동으로 켭니다(이름이 같은 파일, 한국어 파일 우선). 여러 언어가 든 .smi는 언어별로 고를 수 있고, CP949(EUC-KR) 자막도 깨지지 않습니다. 크기·싱크(0.1초 단위) 조절, 동영상에 내장된 자막 트랙
   - 오디오 트랙 선택, 음악은 앨범 아트·제목·아티스트 화면과 무작위·반복 버튼
   - 이어폰을 빼면 일시정지, 이어폰·블루투스 버튼으로 재생·일시정지·이전·다음, 전화 등 다른 소리가 나면 일시정지 후 다시 재생
-  - Android 기본 디코더(MediaPlayer)를 쓰므로 기기가 지원하는 형식만 재생합니다(MP4·MKV·WebM·3GP·TS, MP3·AAC·FLAC·OGG·WAV 등). AVI·WMV·FLV처럼 지원하지 않는 파일은 ‘다른 앱으로 열기’를 안내합니다.
+  - 재생 엔진 두 가지: 먼저 Android 기본 플레이어(하드웨어 디코더, MP4·MKV·WebM·TS 등)로 열고, 열지 못하거나 화면이 안 나오면 내장 **VLC 엔진(libVLC)**으로 자동 전환합니다. AVI(DivX·Xvid)·WMV·ASF·FLV·RMVB·VOB·MPG와 AC3·DTS·WMA 음성처럼 기기 코덱이 없는 형식은 처음부터 VLC로 재생합니다. 더보기 › ‘재생 엔진’에서 직접 바꿀 수도 있습니다.
+  - VLC로 재생할 때는 파일 안에 든 자막은 표시하지 않고, 옆에 있는 자막 파일(srt·smi·ass 등)만 표시합니다.
   - 앱을 나가거나 화면을 끄면 일시정지합니다(백그라운드 재생은 없음). 설계와 VLC 기능 비교는 `docs/player.md`에 있습니다.
+- **진단 정보**: 앱이 비정상 종료되면 다음 실행 때 알려 주고, 설정 › 저장소 › ‘진단 정보’에서 오류 내용과 USB 정보를 복사할 수 있습니다(기기 안에만 저장).
 - **설정**: 테마(시스템·라이트·다크), Material You 색상, 미리보기 이미지, 폴더 항목 수, 사진을 앱에서 열기, 동영상·음악을 앱에서 재생, 이어서 재생, 오픈소스 라이선스
 - **언어**: 한국어, 영어
 - `Android/data`, `Android/obb`는 Android 11부터 시스템 정책상 열 수 없어서 안내 화면으로 처리합니다.
@@ -71,7 +73,7 @@
 
 ## 테스트
 
-`./gradlew testDebugUnitTest`로 모두 62개를 실행합니다. PC의 JVM에서 Robolectric으로 돌아갑니다.
+`./gradlew testDebugUnitTest`로 모두 63개를 실행합니다. PC의 JVM에서 Robolectric으로 돌아갑니다.
 
 | 테스트 | 개수 | 내용 |
 |---|---|---|
@@ -80,7 +82,7 @@
 | `AppFlowTest` | 4 | 실제 화면 흐름 실행, `app/screenshots/`에 스크린샷 저장 |
 | `GalleryCoreTest` | 6 | 앨범 묶기·정렬, 날짜별 구분(시간대), 날짜 보정, 동영상 길이 표시, 폴더 스캔(`.nomedia`·숨김 제외) |
 | `GalleryFlowTest` | 4 | 갤러리·앨범·뷰어·상세 정보·삭제 흐름, 파일 목록에서 사진 열기, 다크·영어 화면 스크린샷 |
-| `PlayerCoreTest` | 8 | 자막 읽기(srt·vtt·여러 언어 smi·ass), CP949·UTF-16 판별, 겹치는 자막, 자막 파일 찾기, 화면 맞춤 계산, 재생 목록·반복·무작위, 시간·속도·이어서 재생 규칙 |
+| `PlayerCoreTest` | 9 | 자막 읽기(srt·vtt·여러 언어 smi·ass), CP949·UTF-16 판별, 겹치는 자막, 깨진 자막 파일, 자막 파일 찾기, 화면 맞춤 계산, 재생 목록·반복·무작위, 시간·속도·이어서 재생 규칙, VLC로 바로 열 형식 |
 | `PlayerFlowTest` | 4 | 파일 목록에서 동영상·음악 재생, 자막 자동 선택·싱크, 메뉴·속도·자막·잠금 화면, 재생 불가 파일, 이어서 재생, 갤러리 재생 버튼, 설정 끄기, 영어 화면 스크린샷 |
 | `StoreOpsTest` | 6 | 내장 메모리 ↔ USB(대소문자를 무시하는 FAT형 저장소) 복사·이동, 충돌 처리·덮어쓰기·폴더 합치기, USB 안 이동, 삭제·검색, 이름 규칙 |
 | `UsbStorageTest` | 5 | 숨겨진 USB 감지 → 접근 허용(드라이브 ID 대소문자·표기 차이, 허용 후 읽기 확인) → 문서 제공자로 파일 작업, 내장 ↔ USB 복사, USB의 압축 풀기·만들기 |

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
@@ -142,6 +143,17 @@ fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel:
                 ActionRow(Icons.Filled.PictureInPictureAlt, stringResource(R.string.player_pip), null, enabled = s.prepared) {
                     close()
                     view.context.findActivity()?.let { Pip.enter(it, s) }
+                }
+            }
+            // Android's own player or VLC: switching helps when one shows no picture or no sound.
+            if (s.engine.isNotEmpty()) {
+                ActionRow(
+                    Icons.Filled.SwapHoriz,
+                    stringResource(R.string.player_engine),
+                    stringResource(if (s.engine == "vlc") R.string.player_engine_vlc else R.string.player_engine_system),
+                ) {
+                    close()
+                    p.switchEngine()
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Color.White.copy(alpha = 0.12f))

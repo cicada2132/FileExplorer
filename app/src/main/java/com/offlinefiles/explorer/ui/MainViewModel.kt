@@ -33,6 +33,7 @@ import com.offlinefiles.explorer.core.archive.Archives
 import com.offlinefiles.explorer.core.archive.CompressionLevel
 import com.offlinefiles.explorer.core.gallery.MediaItem
 import com.offlinefiles.explorer.core.gallery.toMediaItem
+import com.offlinefiles.explorer.data.CrashLog
 import com.offlinefiles.explorer.data.FileIntents
 import com.offlinefiles.explorer.data.GrantResult
 import com.offlinefiles.explorer.data.Settings
@@ -233,6 +234,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var viewerArchive: Pair<String, DocumentStaging.Staged>? = null
 
     init {
+        if (CrashLog.takeUnseen(app)) message(R.string.msg_crashed_last_time)
         refreshVolumes()
         viewModelScope.launch {
             combine(rawListing, settings.map { it.sort to it.showHidden }.distinctUntilChanged()) { raw, opts ->

@@ -62,7 +62,14 @@ object Subtitles {
     fun load(file: File): List<SubtitleTrack> {
         if (!file.isFile || file.length() > MAX_BYTES) return emptyList()
         val text = runCatching { decode(file.readBytes()) }.getOrNull() ?: return emptyList()
-        return parse(text, FileTypes.extensionOf(file.name), file.name)
+        // A broken subtitle file must never take the player (or the app) down with it.
+        return try {
+            parse(text, FileTypes.extensionOf(file.name), file.name)
+        } catch (e: Exception) {
+            emptyList()
+        } catch (e: StackOverflowError) {
+            emptyList()
+        }
     }
 
     fun parse(text: String, extension: String, name: String): List<SubtitleTrack> {
@@ -212,8 +219,8 @@ object Subtitles {
                 line.startsWith("Dialogue:", ignoreCase = true) -> {
                     val values = line.substringAfter(':').split(',', limit = fields.size)
                     if (values.size < fields.size) continue
-                    val start = clock(values[fields.indexOf("start")]) ?: continue
-                    val end = clock(values[fields.indexOf("end")]) ?: continue
+                    val start = values.getOrNull(fields.indexOf("start"))?.let(::clock) ?: continue
+                    val end = values.getOrNull(fields.indexOf("end"))?.let(::clock) ?: continue
                     val body = values[fields.indexOf("text").takeIf { it >= 0 } ?: (fields.size - 1)]
                         .replace(Regex("""\{[^}]*}"""), "")
                         .replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
@@ -237,7 +244,7 @@ object Subtitles {
         val decoded = NUMERIC_ENTITY.replace(noTags) { m ->
             val v = m.groupValues[1]
             val code = if (v.startsWith("x") || v.startsWith("X")) v.drop(1).toIntOrNull(16) else v.toIntOrNull()
-            code?.let { String(Character.toChars(it)) } ?: m.value
+            code?.takeIf { Character.isValidCodePoint(it) }?.let { String(Character.toChars(it)) } ?: m.value
         }
             .replace("&nbsp;", " ", ignoreCase = true)
             .replace("&lt;", "<", ignoreCase = true)

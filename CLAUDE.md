@@ -8,14 +8,15 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 62 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 63 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
 ```
 
-- CI: `.github/workflows/apk.yml` builds a debug APK on every push and republishes it as the GitHub release
-  `apk-<branch>` (README links `apk-main`). Debug-signed, so the key differs per run.
+- CI: `.github/workflows/apk.yml` builds debug APKs on every push and republishes them as the GitHub release
+  `apk-<branch>` (README links `apk-main`): `FileExplorer-<branch>.apk` (arm64) and `-universal.apk`.
+  Debug-signed, so the key differs per run. APKs are split per ABI (`splits.abi`) because of libVLC.
 - Cloud sessions: `.claude/hooks/session-start.sh` installs the Android SDK (`/opt/android-sdk`),
   writes `local.properties`, installs `7z`, and pre-fetches Gradle deps.
 - Maven Central sometimes returns HTTP 429 to this environment (Gradle deps and Robolectric's
@@ -28,9 +29,14 @@ User-facing docs (Korean) are in `README.md`.
   player logic and subtitle parsing (`core/player`)
 - `data/` Android access: storage volumes, MediaStore (`MediaLibrary.kt`), prefs, player memory (`PlayerStore.kt`), intents (`Platform.kt`)
 - `ops/` background operations; `ui/` Compose screens (`browser`, `gallery`, `home`, `archive`, `settings`, `dialogs`, `player`)
-- `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` owns the framework `MediaPlayer` (no ExoPlayer/libVLC: no new libraries)
+- `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` drives an `Engine` (`ui/player/Engines.kt`):
+  `SystemEngine` (framework `MediaPlayer`) first, `VlcEngine` (libVLC) for AVI/WMV/FLV... (`core/player` `EngineChoice`)
+  and as automatic fallback when the system player fails or finds no video. libVLC can't load under Robolectric:
+  `VlcEngine.available` is false there, so tests exercise the system path. Never let `LibVLC` load its natives itself
+  (it calls `System.exit` on failure) — `VlcEngine` loads them first in a try/catch.
+- `data/CrashLog.kt` records the last uncaught exception; `data/UsbDiagnostics.kt` builds Settings › Diagnostics (crash + USB).
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 8, `PlayerFlowTest` 4
+  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 9, `PlayerFlowTest` 4
 
 ## USB drives
 
@@ -54,7 +60,8 @@ seeks but draws nothing); `PlayerFlowTest` sets lengths with `ShadowMediaPlayer.
 
 ## Rules
 
-- Offline app: never add the `INTERNET` permission. Do not add new libraries.
+- Offline app: never add the `INTERNET` permission. Do not add new libraries (libVLC `org.videolan.android:libvlc-all`
+  was added at the owner's request for video codecs; LGPL notice is in Settings › Licenses).
 - Do not change `applicationId`, the signing config, or existing file-management behavior unless asked.
 - Every string change goes in both `res/values/strings.xml` (English) and `res/values-ko/strings.xml` (Korean).
 - Keep README's feature list and test counts in sync with the code.

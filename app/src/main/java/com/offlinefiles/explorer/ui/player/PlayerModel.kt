@@ -9,11 +9,8 @@ import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.MediaFormat
 import android.media.MediaMetadata
 import android.media.MediaMetadataRetriever
-import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -22,6 +19,7 @@ import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.offlinefiles.explorer.R
 import com.offlinefiles.explorer.core.player.AspectMode
+import com.offlinefiles.explorer.core.player.EngineChoice
 import com.offlinefiles.explorer.core.player.PlayQueue
 import com.offlinefiles.explorer.core.player.PlaybackSpeed
 import com.offlinefiles.explorer.core.player.RepeatMode
@@ -31,6 +29,8 @@ import com.offlinefiles.explorer.core.player.SubtitleTrack
 import com.offlinefiles.explorer.core.player.Subtitles
 import com.offlinefiles.explorer.data.PlayerStore
 import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.data.UsbDiagnostics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,7 +49,7 @@ import kotlin.math.max
 /** One file in the play queue. */
 data class PlayItem(val path: String, val name: String, val isVideo: Boolean)
 
-/** An audio track of the file; [index] is MediaPlayer's track number. */
+/** An audio track of the file; [index] is the engine's track number. */
 data class TrackOption(val index: Int, val label: String)
 
 /** An entry of the subtitle menu: a track inside the video, or a subtitle file (one language of it). */
@@ -108,14 +108,16 @@ data class PlayerUi(
     /** Set when the file started where it was left off last time. */
     val resumedFrom: Long? = null,
     val meta: MediaMeta? = null,
+    /** "system" (Android's MediaPlayer) or "vlc" (libVLC), once a file is loading. */
+    val engine: String = "",
 ) {
     val current: PlayItem? get() = queue.getOrNull(index)
     val isVideo: Boolean get() = current?.isVideo == true
 }
 
 /**
- * The built-in player: one framework MediaPlayer (no extra libraries), a play queue, subtitles,
- * audio focus and headset buttons. Lives in MainViewModel, so playback carries on through
+ * The built-in player: Android's MediaPlayer, with libVLC for the files it can't play (see
+ * [Engine]), a play queue, subtitles, audio focus and headset buttons. Lives in MainViewModel, so playback carries on through
  * rotation; the screen only lends it a Surface to draw on.
  */
 class PlayerModel(
@@ -135,9 +137,12 @@ class PlayerModel(
     private val _subtitleText = MutableStateFlow<String?>(null)
     val subtitleText: StateFlow<String?> = _subtitleText.asStateFlow()
 
-    private var player: MediaPlayer? = null
+    private var player: Engine? = null
     private var prepared = false
     private var surface: Surface? = null
+    private var surfaceW = 0
+    private var surfaceH = 0
+    private var autoplayCurrent = true
     private var order: List<Int> = emptyList()
     private var nextToken = 1L
     private var loadCounter = 0L
@@ -212,7 +217,8 @@ class PlayerModel(
         if (paths.any { path == it || path.startsWith("$it/") }) close()
     }
 
-    private fun load(index: Int, autoplay: Boolean = true) {
+    /** [useVlc]: null picks the engine by file type (VLC for AVI, WMV...), true/false forces one. */
+    private fun load(index: Int, autoplay: Boolean = true, useVlc: Boolean? = null) {
         val s = _ui.value ?: return
         val item = s.queue.getOrNull(index) ?: return
         stopCurrent()
@@ -227,55 +233,103 @@ class PlayerModel(
             index = index, loadId = id, prepared = false, playing = false, ended = false, error = false,
             firstFrame = false, durationMs = 0, videoW = 0, videoH = 0, boost = false, abA = null, abB = null,
             audioTracks = emptyList(), audioTrack = -1, subtitles = emptyList(), subtitle = null, subtitleDelayMs = 0,
-            resumedFrom = null, meta = null,
+            resumedFrom = null, meta = null, engine = "",
             canNext = PlayQueue.step(order, index, 1, s.repeat) != null,
             canPrevious = PlayQueue.step(order, index, -1, s.repeat) != null,
         )
         val resumeAt = if (resumeEnabled()) store.position(item.path) else null
-        val mp = MediaPlayer()
-        player = mp
-        prepared = false
-        appliedSpeed = 1f
-        mp.setAudioAttributes(attributes(item.isVideo))
-        mp.setOnPreparedListener { if (player === it) onPrepared(it, autoplay, resumeAt) }
-        mp.setOnCompletionListener { if (player === it && prepared) onCompletion() }
-        mp.setOnErrorListener { p, _, _ ->
-            if (player === p) onError()
-            true
-        }
-        mp.setOnInfoListener { p, what, _ ->
-            if (player === p && what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) update { it.copy(firstFrame = true) }
-            false
-        }
-        mp.setOnVideoSizeChangedListener { p, w, h ->
-            if (player === p && w > 0 && h > 0) update { it.copy(videoW = w, videoH = h) }
-        }
-        mp.setOnSeekCompleteListener { p -> if (player === p) onSeekComplete() }
-        mp.setOnTimedTextListener { p, text ->
-            if (player === p) {
-                embeddedText = text?.text?.let(Subtitles::cleanMarkup)?.ifBlank { null }
+        autoplayCurrent = autoplay
+        lateinit var engine: Engine
+        val listener = object : EngineListener {
+            private fun mine() = player === engine
+
+            override fun onPrepared() {
+                if (mine()) this@PlayerModel.onPrepared(engine, autoplay, resumeAt)
+            }
+
+            override fun onCompletion() {
+                if (mine() && prepared) this@PlayerModel.onCompletion()
+            }
+
+            override fun onError(detail: String) {
+                if (mine()) onEngineError(engine, detail)
+            }
+
+            override fun onFirstFrame() {
+                if (mine()) update { it.copy(firstFrame = true) }
+            }
+
+            override fun onVideoSize(width: Int, height: Int) {
+                if (mine()) update { it.copy(videoW = width, videoH = height) }
+            }
+
+            override fun onSeekComplete() {
+                if (mine()) this@PlayerModel.onSeekComplete()
+            }
+
+            override fun onTimedText(text: String?) {
+                if (!mine()) return
+                embeddedText = text?.let(Subtitles::cleanMarkup)?.ifBlank { null }
                 refreshSubtitle()
             }
+
+            override fun onTracksChanged() {
+                if (mine() && prepared) applyTracks(engine)
+            }
         }
+        val wantVlc = useVlc ?: EngineChoice.prefersVlc(item.name)
+        engine = (if (wantVlc) VlcEngine.create(context, listener) else null) ?: SystemEngine(context, listener)
+        player = engine
+        prepared = false
+        appliedSpeed = 1f
+        update { it.copy(engine = engine.name) }
         try {
-            // USB drives opened through the system picker have no file paths: play through the provider.
-            val tree = Stores.tree(item.path)
-            if (tree != null) mp.setDataSource(context, tree.documentUri(item.path)) else mp.setDataSource(item.path)
-            if (item.isVideo) surface?.let { mp.setSurface(it) }
-            mp.prepareAsync()
+            engine.open(item, attributes(item.isVideo), if (item.isVideo) surface else null, surfaceW, surfaceH)
         } catch (e: Exception) {
-            onError()
+            onEngineError(engine, "open: ${e.javaClass.simpleName}: ${e.message}")
         }
-        loadSidecars(item, id, resumeAt)
-        updateSession()
+        if (player === engine) {
+            loadSidecars(item, id, resumeAt)
+            updateSession()
+        }
     }
+
+    /**
+     * The system player couldn't play the file (or showed no picture): VLC gets a try before the
+     * error screen. VLC's own errors go straight to the error screen.
+     */
+    private fun onEngineError(engine: Engine, detail: String) {
+        val s = _ui.value ?: return
+        val item = s.current ?: return
+        UsbDiagnostics.log(context, "player ${engine.name} ${item.name}: $detail")
+        val early = !prepared || (item.isVideo && !s.firstFrame)
+        if (engine is SystemEngine && early && VlcEngine.available(context)) {
+            load(s.index, autoplayCurrent, useVlc = true)
+            return
+        }
+        onError()
+    }
+
+    /** Switches the current file between Android's player and VLC (from the player's menu). */
+    fun switchEngine() {
+        val s = _ui.value ?: return
+        val toVlc = s.engine != "vlc"
+        if (toVlc && !VlcEngine.available(context)) {
+            message(R.string.player_vlc_unavailable)
+            return
+        }
+        saveResume()
+        load(s.index, autoplay = true, useVlc = toVlc)
+    }
+
+    val vlcAvailable: Boolean get() = VlcEngine.available(context)
 
     private fun attributes(video: Boolean): AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(if (video) AudioAttributes.CONTENT_TYPE_MOVIE else AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
 
-    /** Saves where the current file was left off and frees its MediaPlayer. */
+    /** Saves where the current file was left off and frees its engine. */
     private fun stopCurrent() {
         saveResume()
         sidecarJob?.cancel()
@@ -287,9 +341,9 @@ class PlayerModel(
         runCatching { mp.release() }
     }
 
-    private fun onPrepared(mp: MediaPlayer, autoplay: Boolean, resumeAt: Long?) {
+    private fun onPrepared(mp: Engine, autoplay: Boolean, resumeAt: Long?) {
         prepared = true
-        val duration = runCatching { mp.duration.toLong() }.getOrDefault(0L).coerceAtLeast(0L)
+        val duration = runCatching { mp.duration }.getOrDefault(0L).coerceAtLeast(0L)
         val item = _ui.value?.current
         val resume = resumeAt?.takeIf {
             item != null && Resume.applies(duration, item.isVideo) && Resume.shouldRemember(it, duration)
@@ -299,6 +353,13 @@ class PlayerModel(
             doSeek(mp, resume, exact = false)
         }
         val tracks = readTracks(mp)
+        val item0 = _ui.value?.current
+        if (mp is SystemEngine && item0?.isVideo == true && !tracks.hasVideo && VlcEngine.available(context)) {
+            // The system found sound but no picture it can decode (e.g. DivX inside MKV): try VLC.
+            UsbDiagnostics.log(context, "player system ${item0.name}: no decodable video track")
+            load(_ui.value!!.index, autoplay, useVlc = true)
+            return
+        }
         embeddedOptions = tracks.subtitles
         val w = runCatching { mp.videoWidth }.getOrDefault(0)
         val h = runCatching { mp.videoHeight }.getOrDefault(0)
@@ -366,7 +427,7 @@ class PlayerModel(
         if (!requestFocus()) return
         try {
             mp.start()
-        } catch (e: IllegalStateException) {
+        } catch (e: Exception) {
             return
         }
         applySpeed(mp, if (s.boost) BOOST_SPEED else s.speed)
@@ -402,10 +463,10 @@ class PlayerModel(
 
     fun seekBy(deltaMs: Long) = seekTo(_position.value + deltaMs)
 
-    private fun doSeek(mp: MediaPlayer, target: Long, exact: Boolean) {
+    private fun doSeek(mp: Engine, target: Long, exact: Boolean) {
         seekInFlightSince = SystemClock.uptimeMillis().coerceAtLeast(1L)
         try {
-            mp.seekTo(target, if (exact) MediaPlayer.SEEK_CLOSEST else MediaPlayer.SEEK_PREVIOUS_SYNC)
+            mp.seekTo(target, exact)
         } catch (e: Exception) {
             seekInFlightSince = 0L
         }
@@ -420,7 +481,7 @@ class PlayerModel(
         if (p != null) {
             doSeek(mp, p.first, p.second)
         } else {
-            runCatching { mp.currentPosition.toLong() }.getOrNull()?.let { _position.value = it }
+            runCatching { mp.position }.getOrNull()?.let { _position.value = it }
             refreshSubtitle()
         }
     }
@@ -472,12 +533,9 @@ class PlayerModel(
     }
 
     /** Only while playing: on a paused MediaPlayer a non-zero speed also starts playback. */
-    private fun applySpeed(mp: MediaPlayer, speed: Float) {
+    private fun applySpeed(mp: Engine, speed: Float) {
         if (speed == appliedSpeed) return
-        runCatching {
-            mp.playbackParams = PlaybackParams().setSpeed(speed)
-            appliedSpeed = speed
-        }
+        if (runCatching { mp.setSpeed(speed) }.getOrDefault(false)) appliedSpeed = speed
     }
 
     fun cycleRepeat() {
@@ -542,9 +600,8 @@ class PlayerModel(
     fun selectAudioTrack(index: Int) {
         val mp = player ?: return
         if (!prepared) return
-        runCatching { mp.selectTrack(index) }
-            .onSuccess { update { it.copy(audioTrack = index) } }
-            .onFailure { message(R.string.player_track_failed) }
+        if (runCatching { mp.selectAudio(index) }.getOrDefault(false)) update { it.copy(audioTrack = index) }
+        else message(R.string.player_track_failed)
     }
 
     // ------------------------------------------------------------------ subtitles
@@ -552,7 +609,7 @@ class PlayerModel(
     fun selectSubtitle(choice: SubtitleSource?) {
         val mp = player
         val current = _ui.value?.subtitle
-        if (current is SubtitleSource.Embedded && current.id != choice?.id) runCatching { mp?.deselectTrack(current.index) }
+        if (current is SubtitleSource.Embedded && current.id != choice?.id) runCatching { mp?.deselectSubtitle(current.index) }
         embeddedText = null
         when (choice) {
             null -> {
@@ -560,7 +617,7 @@ class PlayerModel(
                 update { it.copy(subtitle = null) }
             }
             is SubtitleSource.Embedded -> {
-                if (mp == null || !prepared || runCatching { mp.selectTrack(choice.index) }.isFailure) {
+                if (mp == null || !prepared || !runCatching { mp.selectSubtitle(choice.index) }.getOrDefault(false)) {
                     message(R.string.player_track_failed)
                     return
                 }
@@ -625,28 +682,39 @@ class PlayerModel(
     /** Tags, artwork and the subtitle files next to the video, read off the main thread. */
     private fun loadSidecars(item: PlayItem, id: Long, resumeAt: Long?) {
         sidecarJob = scope.launch {
-            if (item.isVideo && !Stores.isDocument(item.path)) {
-                val file = File(item.path)
-                val found = withContext(Dispatchers.IO) {
-                    val all = Subtitles.findFor(file, file.parentFile?.listFiles()?.toList().orEmpty())
-                    val matching = all.filter { Subtitles.matches(file, it) }.take(MAX_EAGER_SUBTITLES)
-                    all to matching.associate { it.path to Subtitles.load(it) }
-                }
-                if (loadCounter != id) return@launch
-                parsed.putAll(found.second)
-                externalFiles = found.first
-                rebuildSubtitleOptions()
-                val preferred = Subtitles.preferred(file, found.first, Locale.getDefault().language)
-                if (preferred != null && _ui.value?.subtitle == null && !parsed[preferred.path].isNullOrEmpty()) {
-                    val label = parsed[preferred.path]?.firstOrNull()?.label ?: preferred.name
-                    selectSubtitle(SubtitleSource.External(preferred.path, 0, label))
-                }
+            try {
+                loadSidecarsNow(item, id, resumeAt)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Extras only: a bad subtitle file or picture must never close the app.
+                UsbDiagnostics.log(context, "player extras ${item.name}: ${e.javaClass.simpleName}: ${e.message}")
             }
-            val meta = withContext(Dispatchers.IO) { readMeta(item, resumeAt) }
-            if (loadCounter != id) return@launch
-            update { it.copy(meta = meta) }
-            updateSession()
         }
+    }
+
+    private suspend fun loadSidecarsNow(item: PlayItem, id: Long, resumeAt: Long?) {
+        if (item.isVideo && !Stores.isDocument(item.path)) {
+            val file = File(item.path)
+            val found = withContext(Dispatchers.IO) {
+                val all = Subtitles.findFor(file, file.parentFile?.listFiles()?.toList().orEmpty())
+                val matching = all.filter { Subtitles.matches(file, it) }.take(MAX_EAGER_SUBTITLES)
+                all to matching.associate { it.path to Subtitles.load(it) }
+            }
+            if (loadCounter != id) return
+            parsed.putAll(found.second)
+            externalFiles = found.first
+            rebuildSubtitleOptions()
+            val preferred = Subtitles.preferred(file, found.first, Locale.getDefault().language)
+            if (preferred != null && _ui.value?.subtitle == null && !parsed[preferred.path].isNullOrEmpty()) {
+                val label = parsed[preferred.path]?.firstOrNull()?.label ?: preferred.name
+                selectSubtitle(SubtitleSource.External(preferred.path, 0, label))
+            }
+        }
+        val meta = withContext(Dispatchers.IO) { readMeta(item, resumeAt) }
+        if (loadCounter != id) return
+        update { it.copy(meta = meta) }
+        updateSession()
     }
 
     private fun readMeta(item: PlayItem, resumeAt: Long?): MediaMeta? {
@@ -675,6 +743,8 @@ class PlayerModel(
             )
         } catch (e: Exception) {
             null
+        } catch (e: OutOfMemoryError) {
+            null
         } finally {
             runCatching { r.release() }
             runCatching { pfd?.close() }
@@ -690,26 +760,36 @@ class PlayerModel(
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
-    private data class Tracks(val audio: List<TrackOption>, val selectedAudio: Int, val subtitles: List<SubtitleSource.Embedded>)
+    private data class Tracks(
+        val audio: List<TrackOption>,
+        val selectedAudio: Int,
+        val subtitles: List<SubtitleSource.Embedded>,
+        val hasVideo: Boolean,
+    )
 
-    private fun readTracks(mp: MediaPlayer): Tracks {
-        val infos = runCatching { mp.trackInfo }.getOrNull() ?: return Tracks(emptyList(), -1, emptyList())
-        val audioTracks = ArrayList<TrackOption>()
-        val subs = ArrayList<SubtitleSource.Embedded>()
-        infos.forEachIndexed { i, t ->
-            when (t?.trackType) {
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO -> audioTracks += TrackOption(i, trackLabel(t, audioTracks.size + 1))
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_TIMEDTEXT -> subs += SubtitleSource.Embedded(i, trackLabel(t, subs.size + 1))
-            }
-        }
-        val selected = runCatching { mp.getSelectedTrack(MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) }.getOrDefault(-1)
-        return Tracks(audioTracks, selected, subs)
+    private fun readTracks(mp: Engine): Tracks {
+        val t = runCatching { mp.tracks() }.getOrNull() ?: return Tracks(emptyList(), -1, emptyList(), hasVideo = true)
+        return Tracks(
+            audio = t.audio.mapIndexed { n, a -> TrackOption(a.index, trackLabel(a, n + 1)) },
+            selectedAudio = t.selectedAudio,
+            subtitles = t.subtitles.mapIndexed { n, a -> SubtitleSource.Embedded(a.index, trackLabel(a, n + 1)) },
+            hasVideo = t.hasVideo,
+        )
     }
 
-    /** "Track 2 · Korean · AC3". */
-    private fun trackLabel(t: MediaPlayer.TrackInfo, n: Int): String {
+    /** Tracks that turned up after the file started (VLC finds them as it reads). */
+    private fun applyTracks(mp: Engine) {
+        val tracks = readTracks(mp)
+        embeddedOptions = tracks.subtitles
+        update { it.copy(audioTracks = tracks.audio, audioTrack = tracks.selectedAudio) }
+        rebuildSubtitleOptions()
+    }
+
+    /** "Track 2 · Korean · AC3" (VLC names its tracks itself). */
+    private fun trackLabel(t: EngineTrack, n: Int): String {
+        t.name?.takeIf { it.isNotBlank() }?.let { return it }
         val lang = Languages.name(t.language)
-        val codec = runCatching { t.format?.getString(MediaFormat.KEY_MIME) }.getOrNull()?.let(::codecName)
+        val codec = t.mime?.let(::codecName)
         return listOfNotNull(context.getString(R.string.player_track_n, n), lang, codec).joinToString(" · ")
     }
 
@@ -742,7 +822,7 @@ class PlayerModel(
         val s = _ui.value ?: return
         if (!prepared || s.error) return
         if (seekInFlightSince == 0L && !s.ended) {
-            runCatching { mp.currentPosition.toLong() }.getOrNull()?.let { _position.value = it }
+            runCatching { mp.position }.getOrNull()?.let { _position.value = it }
         }
         val pos = _position.value
         val a = s.abA
@@ -766,18 +846,27 @@ class PlayerModel(
             store.forget(item.path)
             return
         }
-        val pos = runCatching { mp.currentPosition.toLong() }.getOrNull() ?: return
+        val pos = runCatching { mp.position }.getOrNull() ?: return
         if (Resume.shouldRemember(pos, s.durationMs)) store.remember(item.path, pos) else store.forget(item.path)
     }
 
     /** The Surface the video is drawn on; null while the screen has none (rotation, closing). */
-    fun attachSurface(s: Surface?) {
+    fun attachSurface(s: Surface?, width: Int = surfaceW, height: Int = surfaceH) {
         surface = s
+        surfaceW = width
+        surfaceH = height
         val mp = player ?: return
         if (_ui.value?.isVideo != true) return
-        runCatching { mp.setSurface(s) }
+        runCatching { mp.setSurface(s, width, height) }
         // A paused video shows nothing on a fresh surface until the next frame: redraw it.
         if (s != null && prepared && _ui.value?.playing == false) seekTo(_position.value)
+    }
+
+    /** The view the video is drawn in changed size (VLC scales to it). */
+    fun surfaceSize(width: Int, height: Int) {
+        surfaceW = width
+        surfaceH = height
+        runCatching { player?.setSurfaceSize(width, height) }
     }
 
     fun detachSurface(s: Surface) {
@@ -794,9 +883,9 @@ class PlayerModel(
                 pause()
                 resumeOnFocusGain = wasPlaying
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching { player?.setVolume(DUCK_VOLUME, DUCK_VOLUME) }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching { player?.setVolume(DUCK_VOLUME) }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                runCatching { player?.setVolume(1f, 1f) }
+                runCatching { player?.setVolume(1f) }
                 if (resumeOnFocusGain) {
                     resumeOnFocusGain = false
                     play()

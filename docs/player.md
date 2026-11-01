@@ -5,10 +5,17 @@
 
 ## 제약과 선택
 
-- 이 앱은 오프라인 전용이고 새 라이브러리를 넣지 않습니다(`CLAUDE.md`). 그래서 libVLC(네이티브 FFmpeg, 수십 MB)나
-  ExoPlayer(Media3)는 쓰지 않고 **Android 기본 `MediaPlayer` + `TextureView` + Compose**로 만들었습니다.
+- 처음에는 새 라이브러리 없이 **Android 기본 `MediaPlayer` + `TextureView` + Compose**로 만들었습니다.
+- AVI 등을 재생해 달라는 요청에 따라 **libVLC**(`org.videolan.android:libvlc-all`, LGPL 2.1+)를 두 번째 엔진으로 넣었습니다.
+  ExoPlayer(Media3)도 검토했지만 AVI 파일 형식만 열 뿐 해독은 기기 코덱을 써서, 오래된 DivX/Xvid·AC3 AVI는 픽셀 등에서 여전히 실패합니다.
+  - 순서: 기본 `MediaPlayer`로 먼저 열고(하드웨어 디코더, 배터리·발열에 유리), 준비 전 오류·첫 프레임 전 오류·영상 트랙 없음이면 VLC로 다시 엽니다.
+    AVI·WMV·ASF·FLV·RMVB·VOB·MPG·WMA·AC3·DTS 등은 처음부터 VLC(`core/player/Playback.kt`의 `EngineChoice`).
+  - 더보기 › ‘재생 엔진’으로 현재 파일의 엔진을 직접 바꿀 수 있습니다.
+  - VLC는 준비 단계가 없어서 음소거로 시작해 첫 프레임에서 멈춘 것을 ‘준비 완료’로 씁니다. 파일 안 자막은 끄고(`--no-spu`),
+    옆의 자막 파일은 앱이 직접 그립니다.
+  - 크기: 네이티브 코드가 CPU 종류마다 40~60MB라 APK를 CPU별로 나눕니다(arm64 APK 약 +25MB). Play용 AAB는 자동으로 나뉩니다.
 - 그 결과 재생 가능한 형식은 **기기의 디코더**가 정합니다. 보통 MP4·MKV·WebM·3GP·TS(H.264/H.265/VP9/AV1, AAC/MP3/Opus/FLAC)는
-  되고, AVI·WMV·FLV·RMVB는 대부분의 기기에서 안 됩니다. 열지 못하면 오류 화면에서 ‘다른 앱으로 열기’와 ‘다음 파일’을 보여 줍니다.
+  되고, 그 밖의 형식은 VLC 엔진이 맡습니다. VLC로도 열지 못하면 오류 화면에서 ‘다른 앱으로 열기’와 ‘다음 파일’을 보여 줍니다.
 - 권한은 추가하지 않았습니다(인터넷·포그라운드 서비스·알림 권한 없음).
 
 ## VLC 기능 분석과 반영 여부
@@ -69,7 +76,8 @@
 
 - `core/player/Playback.kt`, `core/player/Subtitles.kt`: 순수 Kotlin. 화면 맞춤 계산, 재생 목록 순서, 이어서 재생 규칙, 자막 파서. `PlayerCoreTest`
 - `data/PlayerStore.kt`: 화면 맞춤·반복·무작위·회전·자막 크기와 파일별 재생 위치(SharedPreferences)
-- `ui/player/PlayerModel.kt`: `MediaPlayer` 하나와 재생 목록, 자막, 오디오 포커스, 이어폰 분리, `MediaSession`(이어폰 버튼).
+- `ui/player/Engines.kt`: `Engine` 인터페이스와 `SystemEngine`(MediaPlayer), `VlcEngine`(libVLC)
+- `ui/player/PlayerModel.kt`: 엔진 하나와 재생 목록, 자막, 오디오 포커스, 이어폰 분리, `MediaSession`(이어폰 버튼).
   `MainViewModel`이 들고 있어서 화면이 바뀌어도 재생이 이어집니다. 화면은 `Surface`만 빌려 줍니다.
 - `ui/player/PlayerScreen.kt`(화면·제스처·바), `PlayerPanels.kt`(패널), `PlayerSystem.kt`(밝기·볼륨·회전·PIP·시스템 바·백그라운드 일시정지)
 - `AndroidManifest.xml`: `configChanges`로 회전 때 액티비티를 다시 만들지 않아 영상이 끊기지 않고, `supportsPictureInPicture`로 PIP를 켭니다.
@@ -83,4 +91,5 @@ Robolectric은 영상을 디코딩하지 않아서 테스트 스크린샷의 영
 - PIP 진입과 PIP 창의 버튼, PIP 창을 닫으면 재생이 멈추는지
 - 이어폰 분리 시 일시정지, 블루투스 버튼
 - MKV 내장 자막과 여러 오디오 트랙(기기마다 다름)
-- AVI 등 미지원 파일에서 오류 화면이 뜨는지
+- AVI(DivX·Xvid)·WMV·FLV가 VLC로 재생되는지, 탐색·배속·회전·PIP가 VLC에서도 되는지
+- 기본 플레이어가 못 여는 MKV/MP4가 VLC로 자동 전환되는지, 더보기 › 재생 엔진 전환

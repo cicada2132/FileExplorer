@@ -23,6 +23,18 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "1.1.0"
+        // libVLC ships native code for each CPU type. 32-bit x86 (old emulators only) is left out.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+    }
+
+    // Directly installed APKs: one per CPU type (smaller) plus a universal one. Play bundles split by themselves.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
     }
 
     androidResources {
@@ -63,6 +75,8 @@ android {
     }
 
     packaging {
+        // Compress native libraries (libVLC) in the APK: a much smaller download; Android unpacks them on install.
+        jniLibs { useLegacyPackaging = true }
         resources {
             excludes += setOf(
                 "/META-INF/{AL2.0,LGPL2.1}",
@@ -115,6 +129,10 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    // Video formats the system player can't open (AVI, WMV, FLV, RMVB, DivX/Xvid, AC3/DTS...).
+    // Added at the owner's request; LGPL-2.1+, used unmodified as a dynamically linked library.
+    implementation("org.videolan.android:libvlc-all:3.7.7")
 
     // Archives (all pure Java, no native code, no network)
     implementation("org.apache.commons:commons-compress:1.28.0")

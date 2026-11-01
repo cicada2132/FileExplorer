@@ -248,6 +248,7 @@ private val libraries = listOf(
     Library("Apache Commons Codec", "The Apache Software Foundation", "Apache License 2.0"),
     Library("Zip4j", "Srikanth Reddy Lingala", "Apache License 2.0"),
     Library("XZ for Java", "Lasse Collin, Igor Pavlov", "0BSD"),
+    Library("libVLC (VLC media player engine, with FFmpeg and other codecs)", "VideoLAN and VLC authors", "GNU LGPL 2.1 or later"),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
