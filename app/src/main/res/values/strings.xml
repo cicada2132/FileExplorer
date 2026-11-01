@@ -311,6 +311,8 @@
     <string name="msg_volume_connected">%s connected</string>
     <string name="msg_usb_pick_root">Pick the drive itself, not a folder on it</string>
     <string name="msg_usb_not_drive">That isn’t the drive that needed access</string>
+    <string name="msg_usb_access_granted">Access to “%s” allowed</string>
+    <string name="msg_usb_unreadable">Access was allowed, but the drive’s files still can’t be read. Unplug the drive, plug it in again and retry.</string>
     <string name="msg_usb_access_forgotten">Access to those drives was removed</string>
     <string name="msg_no_picker">This device has no system file picker</string>
     <string name="settings_storage">Storage</string>

@@ -1,10 +1,12 @@
 package com.offlinefiles.explorer.data
 
 import android.app.usage.StorageStatsManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.StatFs
 import android.os.storage.StorageManager
@@ -12,6 +14,7 @@ import android.os.storage.StorageVolume
 import android.provider.DocumentsContract
 import com.offlinefiles.explorer.R
 import java.io.File
+import java.util.Locale
 
 enum class VolumeKind { INTERNAL, SD_CARD, USB }
 
@@ -57,6 +60,9 @@ sealed interface GrantResult {
     /** Not one of the drives that needed access. */
     data object NotADrive : GrantResult
 
+    /** Access was given, but the drive's files still couldn't be listed. */
+    data object Unreadable : GrantResult
+
     data object Failed : GrantResult
 }
 
@@ -75,7 +81,7 @@ object StorageVolumes {
         val sm = context.getSystemService(StorageManager::class.java)
         val result = LinkedHashMap<String, VolumeInfo>()
         val primary = Environment.getExternalStorageDirectory()
-        val grants = grantedTrees(context)
+        val grants = grants(context)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && sm != null) {
             for (v in sm.storageVolumes) {
@@ -111,7 +117,7 @@ object StorageVolumes {
     private fun isMounted(v: StorageVolume): Boolean =
         v.state == Environment.MEDIA_MOUNTED || v.state == Environment.MEDIA_MOUNTED_READ_ONLY
 
-    private fun describe(context: Context, v: StorageVolume?, dir: File?, grants: Map<String, Uri>): VolumeInfo? {
+    private fun describe(context: Context, v: StorageVolume?, dir: File?, grants: Map<String, Grant>): VolumeInfo? {
         val isPrimary = v?.isPrimary ?: (dir?.path == Environment.getExternalStorageDirectory().path)
         if (isPrimary && !(v?.isRemovable ?: false)) {
             val d = dir ?: Environment.getExternalStorageDirectory()
@@ -128,7 +134,8 @@ object StorageVolumes {
             context.getString(if (kind == VolumeKind.USB) R.string.storage_usb else R.string.storage_sd)
         }
         val mountedReadOnly = v?.state == Environment.MEDIA_MOUNTED_READ_ONLY
-        val tree = uuid?.let { grants[it] }
+        val grant = uuid?.let { grants[key(it)] }
+        val tree = grant?.uri
         if (readable) {
             val writable = !mountedReadOnly && dir!!.canWrite()
             if (writable || tree == null) {
@@ -141,12 +148,17 @@ object StorageVolumes {
             }
         }
         if (uuid == null) return null
-        if (tree == null) {
+        if (grant == null || tree == null) {
             return VolumeInfo(path, label, kind, 0, 0, VolumeAccess.NEEDS_GRANT, uuid, readOnly = mountedReadOnly, canGrant = true)
         }
         val (total, free) = if (readable) capacity(context, dir!!, kind)
         else DocumentTree(context.contentResolver, path, tree).capacity()
-        return VolumeInfo(path, label, kind, total, free, VolumeAccess.DOCUMENTS, uuid, readOnly = mountedReadOnly, treeUri = tree.toString())
+        val writable = grant.writable && !mountedReadOnly
+        return VolumeInfo(
+            path, label, kind, total, free, VolumeAccess.DOCUMENTS, uuid,
+            readOnly = !writable,
+            treeUri = tree.toString(),
+        )
     }
 
     private fun capacity(context: Context, dir: File, kind: VolumeKind): Pair<Long, Long> {
@@ -171,14 +183,35 @@ object StorageVolumes {
 
     // ------------------------------------------------------------------ system file picker
 
+    /** A drive root the user opened to the app, and whether they let it change files there. */
+    private data class Grant(val uri: Uri, val writable: Boolean)
+
+    private const val GRANT_PREFS = "drive_access"
+    private const val KEY_REQUESTED = "requested"
+    private const val VOLUME_PREFIX = "volume:"
+
+    private fun grantPrefs(context: Context) = context.getSharedPreferences(GRANT_PREFS, Context.MODE_PRIVATE)
+
+    /** Volume uuids are compared without case: the picker and the volume list may spell them differently. */
+    private fun key(uuid: String) = uuid.uppercase(Locale.ROOT)
+
     /** Drive roots the user opened to the app in the system file picker, by volume uuid. */
-    fun grantedTrees(context: Context): Map<String, Uri> {
-        val out = HashMap<String, Uri>()
+    fun grantedTrees(context: Context): Map<String, Uri> = grants(context).mapValues { it.value.uri }
+
+    private fun grants(context: Context): Map<String, Grant> {
+        val held = HashMap<String, Grant>()
         val permissions = runCatching { context.contentResolver.persistedUriPermissions }.getOrNull().orEmpty()
         for (p in permissions) {
-            if (!p.isReadPermission || !p.isWritePermission) continue
-            val uuid = driveRootOf(p.uri) ?: continue
-            out[uuid] = p.uri
+            if (!p.isReadPermission || driveRootOf(p.uri) == null) continue
+            held[p.uri.toString()] = Grant(p.uri, p.isWritePermission)
+        }
+        val out = HashMap<String, Grant>()
+        for (g in held.values) out[key(driveRootOf(g.uri)!!)] = g
+        // Drives whose picker id didn't match the volume's uuid: the volume they were picked for.
+        for ((k, v) in grantPrefs(context).all) {
+            if (!k.startsWith(VOLUME_PREFIX)) continue
+            val g = held[v as? String ?: continue] ?: continue
+            out[key(k.removePrefix(VOLUME_PREFIX))] = g
         }
         return out
     }
@@ -208,36 +241,74 @@ object StorageVolumes {
         )
     }
 
-    /** Keeps the access the user gave in the file picker, if [uri] is a drive that asked for it. */
-    fun acceptGrant(context: Context, uri: Uri, volumes: List<VolumeInfo>): GrantResult {
+    /**
+     * Notes which drive the picker is opened for. Kept on disk: Android may close the app while
+     * the picker is showing, and the answer then arrives in a new process.
+     */
+    fun rememberRequest(context: Context, volume: VolumeInfo) {
+        grantPrefs(context).edit().putString(KEY_REQUESTED, volume.uuid).apply()
+    }
+
+    /** The drive the picker was last opened for (once). */
+    fun takeRequest(context: Context): String? {
+        val sp = grantPrefs(context)
+        return sp.getString(KEY_REQUESTED, null)?.also { sp.edit().remove(KEY_REQUESTED).apply() }
+    }
+
+    /**
+     * Keeps the access the user gave in the file picker, if [uri] is a removable drive, and checks
+     * that its files can really be read. [requested] is the drive the picker was opened for: a
+     * drive root the volume list doesn't know by that id is taken to be that drive.
+     */
+    fun acceptGrant(context: Context, uri: Uri, volumes: List<VolumeInfo>, requested: String? = null): GrantResult {
         if (uri.authority != DOCS_AUTHORITY || !runCatching { DocumentsContract.isTreeUri(uri) }.getOrDefault(false)) {
             return GrantResult.NotADrive
         }
         val id = runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull() ?: return GrantResult.NotADrive
-        val uuid = id.substringBefore(':', "")
-        if (volumes.none { it.uuid == uuid && it.canGrant }) return GrantResult.NotADrive
+        val pickedId = id.substringBefore(':', "")
+        if (pickedId.isEmpty()) return GrantResult.NotADrive
+        val drives = volumes.filter { it.kind != VolumeKind.INTERNAL && it.uuid != null }
+        val volume = drives.firstOrNull { key(it.uuid!!) == key(pickedId) }
+            ?: drives.firstOrNull { it.uuid == requested }?.takeIf { pickedId !in INTERNAL_ROOTS }
+            ?: return GrantResult.NotADrive
         if (driveRootOf(uri) == null) return GrantResult.NotRoot
-        return try {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-            GrantResult.Granted(uuid)
-        } catch (e: SecurityException) {
-            GrantResult.Failed
+
+        val resolver = context.contentResolver
+        val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val write = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        // Read-only drives may come back without write access; reading alone is still worth keeping.
+        val taken = listOf(read or write, read).firstOrNull { flags ->
+            runCatching { resolver.takePersistableUriPermission(uri, flags) }.isSuccess
+        } ?: return GrantResult.Failed
+        if (!canList(resolver, uri, id)) {
+            runCatching { resolver.releasePersistableUriPermission(uri, taken) }
+            return GrantResult.Unreadable
         }
+        val uuid = volume.uuid!!
+        val sp = grantPrefs(context).edit()
+        if (key(uuid) == key(pickedId)) sp.remove(VOLUME_PREFIX + uuid) else sp.putString(VOLUME_PREFIX + uuid, uri.toString())
+        sp.apply()
+        return GrantResult.Granted(uuid)
+    }
+
+    /** Ids the external storage provider uses for the phone's own storage, never a removable drive. */
+    private val INTERNAL_ROOTS = setOf("primary", "home")
+
+    private fun canList(resolver: ContentResolver, tree: Uri, rootId: String): Boolean = try {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId)
+        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null as Bundle?, null)
+            ?.use { true } ?: false
+    } catch (e: Exception) {
+        false
     }
 
     /** Gives back access to drives the user opened in the file picker. */
     fun releaseGrants(context: Context) {
         val resolver = context.contentResolver
-        for (uri in grantedTrees(context).values) {
-            runCatching {
-                resolver.releasePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
-            }
+        for (g in grants(context).values) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or (if (g.writable) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+            runCatching { resolver.releasePersistableUriPermission(g.uri, flags) }
         }
+        grantPrefs(context).edit().clear().apply()
     }
 }

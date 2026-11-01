@@ -311,6 +311,8 @@
     <string name="msg_volume_connected">%s 연결됨</string>
     <string name="msg_usb_pick_root">저장소 안의 폴더가 아니라 저장소 자체를 선택해 주세요</string>
     <string name="msg_usb_not_drive">접근을 허용할 저장소가 아닙니다</string>
+    <string name="msg_usb_access_granted">“%s” 접근이 허용되었습니다</string>
+    <string name="msg_usb_unreadable">접근은 허용되었지만 저장소의 파일을 읽을 수 없습니다. 저장소를 뺐다가 다시 연결한 뒤 다시 시도해 주세요.</string>
     <string name="msg_usb_access_forgotten">저장소 접근 권한을 해제했습니다</string>
     <string name="msg_no_picker">이 기기에는 시스템 파일 선택 화면이 없습니다</string>
     <string name="settings_storage">저장소</string>

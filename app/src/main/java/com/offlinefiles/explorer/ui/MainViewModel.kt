@@ -293,21 +293,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Opens the system file picker at the root of [v]. */
     fun requestAccess(v: VolumeInfo) {
         dialog.value = null
+        StorageVolumes.rememberRequest(app, v)
         eventChannel.trySend(UiEvent.RequestAccess(StorageVolumes.accessIntent(app, v)))
     }
 
     /** What the user picked in the system file picker (null if they backed out). */
     fun onAccessResult(uri: Uri?) {
+        val requested = StorageVolumes.takeRequest(app)
         if (uri == null) return
-        when (val r = StorageVolumes.acceptGrant(app, uri, _volumes.value)) {
-            is GrantResult.Granted -> refreshVolumes { list ->
-                val v = list.firstOrNull { it.uuid == r.uuid } ?: return@refreshVolumes
-                val here = currentDir()
-                if (here != null && StorageVolumes.volumeFor(here, list)?.path == v.path) refresh() else openDir(v.path)
+        viewModelScope.launch {
+            // Read the drives afresh: the app may have been restarted while the picker was open.
+            val (r, list) = withContext(Dispatchers.IO) {
+                val r = StorageVolumes.acceptGrant(app, uri, StorageVolumes.list(app), requested)
+                r to StorageVolumes.list(app)
             }
-            GrantResult.NotRoot -> message(R.string.msg_usb_pick_root)
-            GrantResult.NotADrive -> message(R.string.msg_usb_not_drive)
-            GrantResult.Failed -> message(R.string.msg_failed_generic)
+            when (r) {
+                is GrantResult.Granted -> {
+                    applyVolumes(list)
+                    val v = list.firstOrNull { it.uuid == r.uuid } ?: return@launch
+                    message(R.string.msg_usb_access_granted, v.label)
+                    val here = currentDir()
+                    if (here != null && StorageVolumes.volumeFor(here, list)?.path == v.path) refresh() else openDir(v.path)
+                }
+                GrantResult.NotRoot -> message(R.string.msg_usb_pick_root)
+                GrantResult.NotADrive -> message(R.string.msg_usb_not_drive)
+                GrantResult.Unreadable -> message(R.string.msg_usb_unreadable)
+                GrantResult.Failed -> message(R.string.msg_failed_generic)
+            }
         }
     }
 

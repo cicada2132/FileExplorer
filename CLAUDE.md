@@ -8,7 +8,7 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 61 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 62 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
@@ -28,7 +28,7 @@ User-facing docs (Korean) are in `README.md`.
 - `ops/` background operations; `ui/` Compose screens (`browser`, `gallery`, `home`, `archive`, `settings`, `dialogs`, `player`)
 - `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` owns the framework `MediaPlayer` (no ExoPlayer/libVLC: no new libraries)
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `StoreOpsTest` 6, `UsbStorageTest` 4, `UsbFlowTest` 2, `PlayerCoreTest` 8, `PlayerFlowTest` 4
+  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 8, `PlayerFlowTest` 4
 
 ## USB drives
 
