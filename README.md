@@ -3,6 +3,16 @@
 오프라인 전용 Android 파일 관리자입니다. Kotlin과 Jetpack Compose로 만들었습니다.
 최소 Android 8.0(API 26), 대상 API 36이며 인터넷 권한이 없습니다.
 
+## APK 내려받기
+
+코드를 수정해서 푸시할 때마다 GitHub Actions(`.github/workflows/apk.yml`)가 디버그 APK를 새로 만듭니다.
+
+- main 최신본: [FileExplorer-main.apk](https://github.com/cicada2132/FileExplorer/releases/download/apk-main/FileExplorer-main.apk)
+- 다른 브랜치: [Releases](https://github.com/cicada2132/FileExplorer/releases)의 `apk-<브랜치 이름>` (브랜치 이름의 `/`는 `-`로 바뀜)
+- 빌드 진행 상황: [Actions](https://github.com/cicada2132/FileExplorer/actions/workflows/apk.yml)
+
+디버그 APK는 빌드마다 다른 디버그 키로 서명됩니다. 이전 자동 빌드 위에 설치가 안 되면 앱을 지우고 설치하세요. Play 배포용은 아래 ‘빌드’를 따릅니다.
+
 ## 기능
 
 - **저장소**: 내장 메모리, SD 카드, USB(OTG)와 각각의 사용량을 보여 줍니다. 연결하거나 분리하면 자동으로 반영합니다.

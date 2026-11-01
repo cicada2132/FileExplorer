@@ -14,6 +14,8 @@ User-facing docs (Korean) are in `README.md`.
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
 ```
 
+- CI: `.github/workflows/apk.yml` builds a debug APK on every push and republishes it as the GitHub release
+  `apk-<branch>` (README links `apk-main`). Debug-signed, so the key differs per run.
 - Cloud sessions: `.claude/hooks/session-start.sh` installs the Android SDK (`/opt/android-sdk`),
   writes `local.properties`, installs `7z`, and pre-fetches Gradle deps.
 - Maven Central sometimes returns HTTP 429 to this environment (Gradle deps and Robolectric's
