@@ -148,10 +148,21 @@ class UsbStorageTest {
         StorageVolumes.releaseGrants(app)
         assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
 
+        // Allowed earlier under an id no volume has, and only this drive is waiting: it is that drive.
+        app.contentResolver.takePersistableUriPermission(
+            FakeDriveProvider.treeUri("USB0"),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+        assertEquals(VolumeAccess.DOCUMENTS, usb().access)
+        assertEquals(FakeDriveProvider.treeUri("USB0").toString(), usb().treeUri)
+        StorageVolumes.releaseGrants(app)
+        assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
+
         // Access that still can't list the drive is given back and reported, not kept.
         assertEquals(GrantResult.Unreadable, StorageVolumes.acceptGrant(app, FakeDriveProvider.treeUri("DEAD-BEEF"), volumes, uuid))
         assertTrue(StorageVolumes.grantedTrees(app).isEmpty())
         assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
+        assertTrue(UsbDiagnostics.report(app).contains("listing failed"))
     }
 
     @Test

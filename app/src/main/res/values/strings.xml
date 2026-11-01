@@ -302,7 +302,7 @@
     <string name="home_tap_to_allow">Tap to allow access</string>
     <string name="home_read_only">Read-only</string>
     <string name="usb_access_title">Allow access to this drive</string>
-    <string name="usb_access_body">Android shares “%s” only with apps you allow in its file picker. On the next screen the drive is already open: tap “Use this folder”, then “Allow”.</string>
+    <string name="usb_access_body">Android shares USB drives only with apps you allow in its file picker.\n\n1. The next screen opens at the top of “%1$s”. Don’t open any folder on it.\n2. Tap “Use this folder” at the bottom.\n3. Tap “Allow”.\n\nIf another place opens, pick “%1$s” from the menu (☰) at the top left.</string>
     <string name="usb_access_continue">Continue</string>
     <string name="action_allow_access">Allow access</string>
     <string name="browser_usb_denied_title">Can’t open this drive</string>
@@ -312,7 +312,11 @@
     <string name="msg_usb_pick_root">Pick the drive itself, not a folder on it</string>
     <string name="msg_usb_not_drive">That isn’t the drive that needed access</string>
     <string name="msg_usb_access_granted">Access to “%s” allowed</string>
-    <string name="msg_usb_unreadable">Access was allowed, but the drive’s files still can’t be read. Unplug the drive, plug it in again and retry.</string>
+    <string name="msg_usb_unreadable">Access was allowed, but the drive’s files still can’t be read. Unplug the drive, plug it in again and retry. Details: Settings › USB diagnostics</string>
+    <string name="msg_usb_picker_cancelled">Access wasn’t allowed. Tap the drive to try again.</string>
+    <string name="settings_usb_diag">USB diagnostics</string>
+    <string name="settings_usb_diag_desc">If a drive won’t open, copy this and send it with your report</string>
+    <string name="msg_diag_copied">Diagnostics copied</string>
     <string name="msg_usb_access_forgotten">Access to those drives was removed</string>
     <string name="msg_no_picker">This device has no system file picker</string>
     <string name="settings_storage">Storage</string>

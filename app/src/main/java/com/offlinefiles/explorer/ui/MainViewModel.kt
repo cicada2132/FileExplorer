@@ -1,5 +1,6 @@
 package com.offlinefiles.explorer.ui
 
+import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
@@ -37,6 +38,7 @@ import com.offlinefiles.explorer.data.GrantResult
 import com.offlinefiles.explorer.data.Settings
 import com.offlinefiles.explorer.data.StorageVolumes
 import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.data.UsbDiagnostics
 import com.offlinefiles.explorer.data.ViewMode
 import com.offlinefiles.explorer.data.VolumeAccess
 import com.offlinefiles.explorer.data.VolumeInfo
@@ -251,13 +253,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshVolumes(then: ((List<VolumeInfo>) -> Unit)? = null) {
         viewModelScope.launch {
+            val seq = ++volumeReads
             val list = withContext(Dispatchers.IO) { StorageVolumes.list(app) }
-            applyVolumes(list)
+            applyVolumes(list, seq)
             then?.invoke(list)
         }
     }
 
-    private fun applyVolumes(list: List<VolumeInfo>) {
+    /** Volume lists run side by side; one read before a newer one finished must not undo it (e.g. a fresh grant). */
+    private var volumeReads = 0L
+    private var volumesApplied = 0L
+
+    private fun applyVolumes(list: List<VolumeInfo>, seq: Long = ++volumeReads) {
+        if (seq < volumesApplied) return
+        volumesApplied = seq
         val before = _volumes.value
         Stores.update(app.contentResolver, list)
         _volumes.value = list
@@ -280,7 +289,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         usbJob = viewModelScope.launch {
             for (wait in longArrayOf(0L, 1500L, 3500L)) {
                 delay(wait)
-                applyVolumes(withContext(Dispatchers.IO) { StorageVolumes.list(app) })
+                val seq = ++volumeReads
+                applyVolumes(withContext(Dispatchers.IO) { StorageVolumes.list(app) }, seq)
             }
         }
     }
@@ -294,7 +304,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestAccess(v: VolumeInfo) {
         dialog.value = null
         StorageVolumes.rememberRequest(app, v)
-        eventChannel.trySend(UiEvent.RequestAccess(StorageVolumes.accessIntent(app, v)))
+        val intent = StorageVolumes.accessIntent(app, v)
+        UsbDiagnostics.log(app, "ask ${v.uuid} (${v.access}, ${v.path}): ${UsbDiagnostics.describe(intent)}")
+        eventChannel.trySend(UiEvent.RequestAccess(intent))
+    }
+
+    /** The system file picker closed. */
+    fun onPickerResult(resultCode: Int, data: Intent?) {
+        UsbDiagnostics.log(app, "picker result=$resultCode ${UsbDiagnostics.describe(data)}")
+        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (uri == null) {
+            StorageVolumes.takeRequest(app)
+            message(R.string.msg_usb_picker_cancelled)
+            return
+        }
+        onAccessResult(uri)
     }
 
     /** What the user picked in the system file picker (null if they backed out). */
@@ -307,6 +331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val r = StorageVolumes.acceptGrant(app, uri, StorageVolumes.list(app), requested)
                 r to StorageVolumes.list(app)
             }
+            UsbDiagnostics.log(app, "result $r → ${list.filter { it.kind != VolumeKind.INTERNAL }.map { "${it.uuid}:${it.access}" }}")
             when (r) {
                 is GrantResult.Granted -> {
                     applyVolumes(list)
@@ -439,8 +464,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         selection.update { sel -> sel.filterTo(HashSet()) { it in present } }
                     }
                 }
-                ListResult.Denied -> _browser.update { it.copy(loading = false, all = emptyList(), status = BrowserUi.Status.DENIED) }
-                ListResult.NotFound -> _browser.update { it.copy(loading = false, all = emptyList(), status = BrowserUi.Status.NOT_FOUND) }
+                ListResult.Denied, ListResult.NotFound -> {
+                    if (Stores.isDocument(path)) UsbDiagnostics.log(app, "listing $result: $path (${Stores.tree(path)?.lastError})")
+                    val status = if (result == ListResult.Denied) BrowserUi.Status.DENIED else BrowserUi.Status.NOT_FOUND
+                    _browser.update { it.copy(loading = false, all = emptyList(), status = status) }
+                }
             }
         }
     }

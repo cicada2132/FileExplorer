@@ -81,7 +81,7 @@ object StorageVolumes {
         val sm = context.getSystemService(StorageManager::class.java)
         val result = LinkedHashMap<String, VolumeInfo>()
         val primary = Environment.getExternalStorageDirectory()
-        val grants = grants(context)
+        val grants = withOrphanGrant(grants(context), sm)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && sm != null) {
             for (v in sm.storageVolumes) {
@@ -112,6 +112,19 @@ object StorageVolumes {
             describe(context, null, primary, grants)?.let { result[primary.path] = it }
         }
         return result.values.sortedBy { it.kind.ordinal }
+    }
+
+    /**
+     * A drive root the user allowed whose id matches no mounted volume, while exactly one removable
+     * volume has no access yet: they are the same drive (the picker spelled its id differently).
+     */
+    private fun withOrphanGrant(grants: Map<String, Grant>, sm: StorageManager?): Map<String, Grant> {
+        val removable = runCatching { sm?.storageVolumes.orEmpty() }.getOrDefault(emptyList())
+            .filter { it.isRemovable && isMounted(it) }.mapNotNull { it.uuid?.let(::key) }.toSet()
+        val orphans = grants.filterKeys { it !in removable }
+        val waiting = removable.filter { it !in grants }
+        if (orphans.size != 1 || waiting.size != 1) return grants
+        return grants + (waiting.single() to orphans.values.single())
     }
 
     private fun isMounted(v: StorageVolume): Boolean =
@@ -270,20 +283,31 @@ object StorageVolumes {
         val drives = volumes.filter { it.kind != VolumeKind.INTERNAL && it.uuid != null }
         val volume = drives.firstOrNull { key(it.uuid!!) == key(pickedId) }
             ?: drives.firstOrNull { it.uuid == requested }?.takeIf { pickedId !in INTERNAL_ROOTS }
-            ?: return GrantResult.NotADrive
-        if (driveRootOf(uri) == null) return GrantResult.NotRoot
+        if (volume == null) {
+            UsbDiagnostics.log(context, "picked id '$pickedId' matches no drive (drives=${drives.map { it.uuid }}, requested=$requested)")
+            return GrantResult.NotADrive
+        }
+        if (driveRootOf(uri) == null) {
+            UsbDiagnostics.log(context, "picked a folder inside the drive: $id")
+            return GrantResult.NotRoot
+        }
 
         val resolver = context.contentResolver
         val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
         val write = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         // Read-only drives may come back without write access; reading alone is still worth keeping.
         val taken = listOf(read or write, read).firstOrNull { flags ->
-            runCatching { resolver.takePersistableUriPermission(uri, flags) }.isSuccess
+            runCatching { resolver.takePersistableUriPermission(uri, flags) }
+                .onFailure { UsbDiagnostics.log(context, "take flags=$flags failed: ${it.javaClass.simpleName}: ${it.message}") }
+                .isSuccess
         } ?: return GrantResult.Failed
-        if (!canList(resolver, uri, id)) {
+        val listError = listError(resolver, uri, id)
+        if (listError != null) {
+            UsbDiagnostics.log(context, "granted (flags=$taken) but listing failed: $listError")
             runCatching { resolver.releasePersistableUriPermission(uri, taken) }
             return GrantResult.Unreadable
         }
+        UsbDiagnostics.log(context, "granted ${volume.uuid} via $uri (flags=$taken)")
         val uuid = volume.uuid!!
         val sp = grantPrefs(context).edit()
         if (key(uuid) == key(pickedId)) sp.remove(VOLUME_PREFIX + uuid) else sp.putString(VOLUME_PREFIX + uuid, uri.toString())
@@ -294,12 +318,14 @@ object StorageVolumes {
     /** Ids the external storage provider uses for the phone's own storage, never a removable drive. */
     private val INTERNAL_ROOTS = setOf("primary", "home")
 
-    private fun canList(resolver: ContentResolver, tree: Uri, rootId: String): Boolean = try {
+    /** Why the drive's top folder can't be listed, or null if it can. */
+    private fun listError(resolver: ContentResolver, tree: Uri, rootId: String): String? = try {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId)
-        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null as Bundle?, null)
-            ?.use { true } ?: false
+        val cursor = resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null as Bundle?, null)
+        cursor?.close()
+        if (cursor == null) "provider returned nothing" else null
     } catch (e: Exception) {
-        false
+        "${e.javaClass.simpleName}: ${e.message}"
     }
 
     /** Gives back access to drives the user opened in the file picker. */

@@ -302,7 +302,7 @@
     <string name="home_tap_to_allow">탭해서 접근 허용</string>
     <string name="home_read_only">읽기 전용</string>
     <string name="usb_access_title">저장소 접근 허용</string>
-    <string name="usb_access_body">Android는 ‘%s’을(를) 시스템 파일 선택 화면에서 허용한 앱에만 보여 줍니다. 다음 화면에 저장소가 열리면 ‘이 폴더 사용’을 누른 뒤 ‘허용’을 누르세요.</string>
+    <string name="usb_access_body">Android는 USB 저장소를 시스템 파일 선택 화면에서 허용한 앱에만 보여 줍니다.\n\n1. 다음 화면에 ‘%1$s’의 첫 화면이 열립니다. 폴더 안으로 들어가지 마세요.\n2. 맨 아래 ‘이 폴더 사용’을 누릅니다.\n3. ‘허용’을 누릅니다.\n\n다른 위치가 열리면 왼쪽 위 메뉴(☰)에서 ‘%1$s’을(를) 고르세요.</string>
     <string name="usb_access_continue">계속</string>
     <string name="action_allow_access">접근 허용</string>
     <string name="browser_usb_denied_title">이 저장소를 열 수 없습니다</string>
@@ -312,7 +312,11 @@
     <string name="msg_usb_pick_root">저장소 안의 폴더가 아니라 저장소 자체를 선택해 주세요</string>
     <string name="msg_usb_not_drive">접근을 허용할 저장소가 아닙니다</string>
     <string name="msg_usb_access_granted">“%s” 접근이 허용되었습니다</string>
-    <string name="msg_usb_unreadable">접근은 허용되었지만 저장소의 파일을 읽을 수 없습니다. 저장소를 뺐다가 다시 연결한 뒤 다시 시도해 주세요.</string>
+    <string name="msg_usb_unreadable">접근은 허용되었지만 저장소의 파일을 읽을 수 없습니다. 저장소를 뺐다가 다시 연결한 뒤 다시 시도해 주세요. 자세한 정보: 설정 › USB 연결 진단</string>
+    <string name="msg_usb_picker_cancelled">접근이 허용되지 않았습니다. 저장소를 눌러 다시 시도하세요.</string>
+    <string name="settings_usb_diag">USB 연결 진단</string>
+    <string name="settings_usb_diag_desc">저장소가 열리지 않으면 이 정보를 복사해서 보내 주세요</string>
+    <string name="msg_diag_copied">진단 정보를 복사했습니다</string>
     <string name="msg_usb_access_forgotten">저장소 접근 권한을 해제했습니다</string>
     <string name="msg_no_picker">이 기기에는 시스템 파일 선택 화면이 없습니다</string>
     <string name="settings_storage">저장소</string>

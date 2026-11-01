@@ -35,6 +35,11 @@ class DocumentTree(
 ) : FileStore {
     private val rootId: String = DocumentsContract.getTreeDocumentId(treeUri)
 
+    /** Why the last listing failed, for the USB diagnostics in Settings. */
+    @Volatile
+    var lastError: String? = null
+        private set
+
     fun contains(path: String): Boolean = path == rootPath || path.startsWith("$rootPath/")
 
     // ------------------------------------------------------------------ addresses
@@ -73,8 +78,10 @@ class DocumentTree(
         val cursor = try {
             resolver.query(uri, COLUMNS, null as Bundle?, null)
         } catch (e: SecurityException) {
+            lastError = "${e.javaClass.simpleName}: ${e.message}"
             return ListResult.Denied
         } catch (e: Exception) {
+            lastError = "${e.javaClass.simpleName}: ${e.message}"
             null
         } ?: return if (stat(dir) == null) ListResult.NotFound else ListResult.Denied
         val items = ArrayList<FileItem>(cursor.count.coerceAtLeast(0))

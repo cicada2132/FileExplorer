@@ -79,7 +79,7 @@ fun AppRoot(vm: MainViewModel) {
 
         // The system file picker, for USB drives Android only shares with apps the user allows there.
         val accessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            vm.onAccessResult(if (result.resultCode == Activity.RESULT_OK) result.data?.data else null)
+            vm.onPickerResult(result.resultCode, result.data)
         }
         val snackbar = remember { SnackbarHostState() }
         LaunchedEffect(Unit) {
