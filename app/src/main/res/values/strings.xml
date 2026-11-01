@@ -276,6 +276,13 @@
     <string name="player_engine_system">Android (tap to try VLC)</string>
     <string name="player_engine_vlc">VLC (tap to try Android)</string>
     <string name="player_vlc_unavailable">VLC can’t run on this device</string>
+    <string name="player_audio_sync">Audio sync</string>
+    <string name="player_audio_sync_hint">Sound ahead of the picture: +. Sound behind: −. Tap the value to reset.</string>
+    <string name="player_audio_sync_vlc_only">Audio sync works with the VLC engine.</string>
+    <string name="player_use_vlc">Play with VLC</string>
+    <string name="player_decoding">Decoding</string>
+    <string name="player_decoding_hw">Hardware (tap for software)</string>
+    <string name="player_decoding_sw">Software (tap for hardware)</string>
     <string name="player_open_other">Open in another app</string>
     <string name="player_info_format">Format</string>
     <string name="player_info_artist">Artist</string>

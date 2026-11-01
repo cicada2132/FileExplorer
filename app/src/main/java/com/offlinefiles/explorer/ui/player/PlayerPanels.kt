@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Shuffle
@@ -93,7 +95,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /** Side sheets of the player (bottom sheets in portrait). */
-enum class Panel { MORE, SPEED, SUBTITLES, AUDIO, SLEEP, QUEUE, INFO }
+enum class Panel { MORE, SPEED, SUBTITLES, AUDIO, AUDIO_SYNC, SLEEP, QUEUE, INFO }
 
 private val PanelColor = Color(0xFF181A1F)
 
@@ -145,6 +147,9 @@ fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel:
                     view.context.findActivity()?.let { Pip.enter(it, s) }
                 }
             }
+            ActionRow(Icons.Filled.GraphicEq, stringResource(R.string.player_audio_sync), delayLabel(s.audioDelayMs)) {
+                onPanel(Panel.AUDIO_SYNC)
+            }
             // Android's own player or VLC: switching helps when one shows no picture or no sound.
             if (s.engine.isNotEmpty()) {
                 ActionRow(
@@ -154,6 +159,16 @@ fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel:
                 ) {
                     close()
                     p.switchEngine()
+                }
+            }
+            if (s.engine == "vlc" && s.isVideo) {
+                ActionRow(
+                    Icons.Filled.Memory,
+                    stringResource(R.string.player_decoding),
+                    stringResource(if (s.hwDecoding) R.string.player_decoding_hw else R.string.player_decoding_sw),
+                ) {
+                    close()
+                    p.toggleHwDecoding()
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = Color.White.copy(alpha = 0.12f))
@@ -237,7 +252,7 @@ fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel:
                 )
                 Text("${(s.subtitleScale * 100).roundToInt()}%", modifier = Modifier.widthIn(min = 52.dp).padding(start = 8.dp))
             }
-            if (s.subtitle is SubtitleSource.External) {
+            if (s.subtitle is SubtitleSource.External || (s.subtitle is SubtitleSource.Embedded && s.engine == "vlc")) {
                 Label(stringResource(R.string.player_subtitle_sync))
                 Row(
                     Modifier
@@ -265,6 +280,38 @@ fun BoxScope.PlayerPanels(vm: MainViewModel, s: PlayerUi, panel: Panel, onPanel:
                 Choice(t.label, selected = s.audioTrack == t.index) { p.selectAudioTrack(t.index) }
             }
             if (s.audioTracks.size <= 1) Hint(stringResource(R.string.player_single_audio))
+        }
+
+        Panel.AUDIO_SYNC -> Sheet(stringResource(R.string.player_audio_sync), close) {
+            if (s.engine == "vlc") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    TextButton(onClick = { p.setAudioDelay(s.audioDelayMs - 1000) }) { Text("−1") }
+                    TextButton(onClick = { p.setAudioDelay(s.audioDelayMs - 50) }) { Text("−0.05") }
+                    Text(
+                        delayLabel(s.audioDelayMs),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.clickable { p.setAudioDelay(0) },
+                    )
+                    TextButton(onClick = { p.setAudioDelay(s.audioDelayMs + 50) }) { Text("+0.05") }
+                    TextButton(onClick = { p.setAudioDelay(s.audioDelayMs + 1000) }) { Text("+1") }
+                }
+                Hint(stringResource(R.string.player_audio_sync_hint))
+            } else {
+                Hint(stringResource(R.string.player_audio_sync_vlc_only))
+                TextButton(
+                    onClick = {
+                        close()
+                        p.switchEngine()
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                ) { Text(stringResource(R.string.player_use_vlc)) }
+            }
         }
 
         Panel.SLEEP -> Sheet(stringResource(R.string.player_sleep), close) {
@@ -472,3 +519,8 @@ private fun sleepLabel(s: PlayerUi): String {
     }
     return PlayerTime.format((at - now).coerceAtLeast(0))
 }
+
+/** "+0.15 s" style label for a delay in milliseconds. */
+@Composable
+private fun delayLabel(ms: Long): String =
+    stringResource(R.string.player_delay_value, String.format(Locale.ROOT, "%+.2f", ms / 1000f))

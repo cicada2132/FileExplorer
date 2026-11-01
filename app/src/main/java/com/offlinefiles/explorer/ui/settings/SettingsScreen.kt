@@ -241,6 +241,7 @@ private val libraries = listOf(
     Library("Jetpack Compose, AndroidX Core / Activity / Lifecycle", "The Android Open Source Project", "Apache License 2.0"),
     Library("Material Icons", "Google", "Apache License 2.0"),
     Library("Kotlin Standard Library", "JetBrains s.r.o.", "Apache License 2.0"),
+    Library("AndroidX ExifInterface", "The Android Open Source Project", "Apache License 2.0"),
     Library("kotlinx.coroutines", "JetBrains s.r.o.", "Apache License 2.0"),
     Library("Apache Commons Compress", "The Apache Software Foundation", "Apache License 2.0"),
     Library("Apache Commons IO", "The Apache Software Foundation", "Apache License 2.0"),

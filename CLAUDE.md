@@ -60,13 +60,13 @@ seeks but draws nothing); `PlayerFlowTest` sets lengths with `ShadowMediaPlayer.
 
 ## Rules
 
-- Offline app: never add the `INTERNET` permission. Do not add new libraries (libVLC `org.videolan.android:libvlc-all`
-  was added at the owner's request for video codecs; LGPL notice is in Settings › Licenses).
+- Offline app: never add the `INTERNET` permission. Libraries may be added when they help (pin exact versions,
+  nothing that needs network access); list each one in Settings › Licenses (`SettingsScreen.kt` `libraries`).
 - Do not change `applicationId`, the signing config, or existing file-management behavior unless asked.
 - Every string change goes in both `res/values/strings.xml` (English) and `res/values-ko/strings.xml` (Korean).
 - Keep README's feature list and test counts in sync with the code.
-- Use only APIs available at minSdk 26 or guard them with `Build.VERSION.SDK_INT`. EXIF uses the framework
-  `android.media.ExifInterface` (no androidx exifinterface), so androidx-only tag constants do not exist.
+- Use only APIs available at minSdk 26 or guard them with `Build.VERSION.SDK_INT`. EXIF uses
+  `androidx.exifinterface.media.ExifInterface` (not the framework class).
 
 ## Signing
 

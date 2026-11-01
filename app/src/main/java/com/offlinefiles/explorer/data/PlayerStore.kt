@@ -33,6 +33,11 @@ class PlayerStore(context: Context) {
         get() = sp.getFloat("subtitle_scale", 1f).coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE)
         set(v) = sp.edit().putFloat("subtitle_scale", v.coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE)).apply()
 
+    /** VLC engine: hardware decoders where possible (false: VLC's software decoders only). */
+    var hwDecoding: Boolean
+        get() = sp.getBoolean("hw_decoding", true)
+        set(v) = sp.edit().putBoolean("hw_decoding", v).apply()
+
     /** Where [path] was left off, or null. */
     fun position(path: String): Long? =
         resume.getString(path, null)?.substringBefore(',')?.toLongOrNull()?.takeIf { it > 0 }

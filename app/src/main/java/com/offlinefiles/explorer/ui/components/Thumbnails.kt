@@ -6,7 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Matrix
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import android.media.MediaMetadataRetriever
 import android.media.ThumbnailUtils
 import android.os.Build

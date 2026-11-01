@@ -523,6 +523,39 @@ private fun VideoLayer(p: PlayerModel, s: PlayerUi, zoom: Float, pan: Offset) {
                 modifier = transformed,
             )
         }
+        // VLC draws subtitle tracks inside the file on a transparent layer of the same size.
+        if (s.engine == "vlc") {
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).apply {
+                        isOpaque = false
+                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                            private var surface: Surface? = null
+
+                            override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                val sf = Surface(st)
+                                surface = sf
+                                p.attachSubtitleSurface(sf)
+                            }
+
+                            override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+
+                            override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
+                                surface?.let {
+                                    p.detachSubtitleSurface(it)
+                                    it.release()
+                                }
+                                surface = null
+                                return true
+                            }
+
+                            override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = Unit
+                        }
+                    }
+                },
+                modifier = transformed,
+            )
+        }
         if (!s.prepared && !s.error && poster == null) {
             Icon(Icons.Filled.PlayArrow, null, tint = Color.White.copy(alpha = 0.15f), modifier = Modifier.size(96.dp))
         }

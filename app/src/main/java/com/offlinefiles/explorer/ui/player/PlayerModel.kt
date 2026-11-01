@@ -110,6 +110,10 @@ data class PlayerUi(
     val meta: MediaMeta? = null,
     /** "system" (Android's MediaPlayer) or "vlc" (libVLC), once a file is loading. */
     val engine: String = "",
+    /** Sound shifted against the picture (VLC only); positive: sound later. */
+    val audioDelayMs: Long = 0,
+    /** VLC: hardware decoders where possible. */
+    val hwDecoding: Boolean = true,
 ) {
     val current: PlayItem? get() = queue.getOrNull(index)
     val isVideo: Boolean get() = current?.isVideo == true
@@ -140,6 +144,7 @@ class PlayerModel(
     private var player: Engine? = null
     private var prepared = false
     private var surface: Surface? = null
+    private var subtitleSurface: Surface? = null
     private var surfaceW = 0
     private var surfaceH = 0
     private var autoplayCurrent = true
@@ -188,6 +193,7 @@ class PlayerModel(
             aspect = store.aspect,
             rotation = store.rotation,
             subtitleScale = store.subtitleScale,
+            hwDecoding = store.hwDecoding,
         )
         startSession()
         registerNoisy()
@@ -233,7 +239,7 @@ class PlayerModel(
             index = index, loadId = id, prepared = false, playing = false, ended = false, error = false,
             firstFrame = false, durationMs = 0, videoW = 0, videoH = 0, boost = false, abA = null, abB = null,
             audioTracks = emptyList(), audioTrack = -1, subtitles = emptyList(), subtitle = null, subtitleDelayMs = 0,
-            resumedFrom = null, meta = null, engine = "",
+            resumedFrom = null, meta = null, engine = "", audioDelayMs = 0,
             canNext = PlayQueue.step(order, index, 1, s.repeat) != null,
             canPrevious = PlayQueue.step(order, index, -1, s.repeat) != null,
         )
@@ -278,8 +284,9 @@ class PlayerModel(
             }
         }
         val wantVlc = useVlc ?: EngineChoice.prefersVlc(item.name)
-        engine = (if (wantVlc) VlcEngine.create(context, listener) else null) ?: SystemEngine(context, listener)
+        engine = (if (wantVlc) VlcEngine.create(context, listener, store.hwDecoding) else null) ?: SystemEngine(context, listener)
         player = engine
+        if (item.isVideo) runCatching { engine.setSubtitleSurface(subtitleSurface) }
         prepared = false
         appliedSpeed = 1f
         update { it.copy(engine = engine.name) }
@@ -323,6 +330,28 @@ class PlayerModel(
     }
 
     val vlcAvailable: Boolean get() = VlcEngine.available(context)
+
+    /** VLC: hardware decoders on or off; the current file reopens where it was. */
+    fun toggleHwDecoding() {
+        val s = _ui.value ?: return
+        store.hwDecoding = !store.hwDecoding
+        update { it.copy(hwDecoding = store.hwDecoding) }
+        if (s.engine == "vlc") {
+            saveResume()
+            load(s.index, autoplay = s.playing || !prepared, useVlc = true)
+        }
+    }
+
+    /** Moves the sound against the picture (VLC only). */
+    fun setAudioDelay(ms: Long) {
+        val v = ms.coerceIn(-MAX_AUDIO_DELAY, MAX_AUDIO_DELAY)
+        val mp = player ?: return
+        if (!runCatching { mp.setAudioDelay(v) }.getOrDefault(false)) {
+            message(R.string.player_audio_sync_vlc_only)
+            return
+        }
+        update { it.copy(audioDelayMs = v) }
+    }
 
     private fun attributes(video: Boolean): AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -623,6 +652,7 @@ class PlayerModel(
                 }
                 activeTrack = null
                 update { it.copy(subtitle = choice) }
+                runCatching { mp.setSubtitleDelay(_ui.value?.subtitleDelayMs ?: 0L) }
             }
             is SubtitleSource.External -> {
                 val tracks = parsed[choice.path]
@@ -651,7 +681,10 @@ class PlayerModel(
     }
 
     fun setSubtitleDelay(ms: Long) {
-        update { it.copy(subtitleDelayMs = ms.coerceIn(-MAX_SUBTITLE_DELAY, MAX_SUBTITLE_DELAY)) }
+        val v = ms.coerceIn(-MAX_SUBTITLE_DELAY, MAX_SUBTITLE_DELAY)
+        update { it.copy(subtitleDelayMs = v) }
+        // Tracks inside the file are timed by the engine (VLC); subtitle files by the app.
+        if (_ui.value?.subtitle is SubtitleSource.Embedded) runCatching { player?.setSubtitleDelay(v) }
         refreshSubtitle()
     }
 
@@ -862,6 +895,16 @@ class PlayerModel(
         if (s != null && prepared && _ui.value?.playing == false) seekTo(_position.value)
     }
 
+    /** The transparent view over the video that VLC draws subtitle tracks on. */
+    fun attachSubtitleSurface(s: Surface?) {
+        subtitleSurface = s
+        if (_ui.value?.isVideo == true) runCatching { player?.setSubtitleSurface(s) }
+    }
+
+    fun detachSubtitleSurface(s: Surface) {
+        if (subtitleSurface === s) attachSubtitleSurface(null)
+    }
+
     /** The view the video is drawn in changed size (VLC scales to it). */
     fun surfaceSize(width: Int, height: Int) {
         surfaceW = width
@@ -1002,6 +1045,7 @@ class PlayerModel(
         const val BOOST_SPEED = 2f
         const val SEEK_STEP_MS = 10_000L
         const val MAX_SUBTITLE_DELAY = 60_000L
+        const val MAX_AUDIO_DELAY = 10_000L
         private const val AB_MIN_MS = 500L
         private const val SEEK_TIMEOUT_MS = 1_500L
         private const val DUCK_VOLUME = 0.3f

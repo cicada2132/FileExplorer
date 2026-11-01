@@ -276,6 +276,13 @@
     <string name="player_engine_system">Android 기본 (눌러서 VLC로 재생)</string>
     <string name="player_engine_vlc">VLC (눌러서 Android 기본으로 재생)</string>
     <string name="player_vlc_unavailable">이 기기에서는 VLC 엔진을 쓸 수 없습니다</string>
+    <string name="player_audio_sync">오디오 싱크</string>
+    <string name="player_audio_sync_hint">소리가 화면보다 빠르면 +, 늦으면 −. 값을 누르면 0으로 돌아갑니다.</string>
+    <string name="player_audio_sync_vlc_only">오디오 싱크는 VLC 엔진에서 조절할 수 있습니다.</string>
+    <string name="player_use_vlc">VLC로 재생</string>
+    <string name="player_decoding">디코딩</string>
+    <string name="player_decoding_hw">하드웨어 (눌러서 소프트웨어)</string>
+    <string name="player_decoding_sw">소프트웨어 (눌러서 하드웨어)</string>
     <string name="player_open_other">다른 앱으로 열기</string>
     <string name="player_info_format">형식</string>
     <string name="player_info_artist">아티스트</string>

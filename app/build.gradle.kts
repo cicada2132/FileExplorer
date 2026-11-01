@@ -129,9 +129,11 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // EXIF from JPEG, HEIF, WebP, PNG and camera RAW files (more formats and tags than the framework's on older Android).
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
 
     // Video formats the system player can't open (AVI, WMV, FLV, RMVB, DivX/Xvid, AC3/DTS...).
-    // Added at the owner's request; LGPL-2.1+, used unmodified as a dynamically linked library.
+    // LGPL-2.1+, used unmodified as a dynamically linked library (notice in Settings › Licenses).
     implementation("org.videolan.android:libvlc-all:3.7.7")
 
     // Archives (all pure Java, no native code, no network)

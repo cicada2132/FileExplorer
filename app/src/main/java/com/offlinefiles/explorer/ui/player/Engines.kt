@@ -62,6 +62,15 @@ interface Engine {
     fun selectSubtitle(index: Int): Boolean
     fun deselectSubtitle(index: Int)
     fun release()
+
+    /** A transparent surface over the video for subtitles the engine draws itself (VLC). */
+    fun setSubtitleSurface(surface: Surface?) = Unit
+
+    /** Positive: sound later. False where the engine can't (Android's player). */
+    fun setAudioDelay(ms: Long): Boolean = false
+
+    /** For subtitle tracks inside the file that the engine draws itself. */
+    fun setSubtitleDelay(ms: Long): Boolean = false
 }
 
 /** The framework MediaPlayer: hardware decoders, MP4/MKV/WebM/TS with H.264/H.265/VP9/AV1. */
@@ -138,12 +147,15 @@ class SystemEngine(private val context: Context, private val listener: EngineLis
 /**
  * libVLC (VLC's engine with its own FFmpeg decoders). It has no "prepare" step: the file starts
  * muted and is paused at its first frame, which stands in for MediaPlayer's onPrepared.
- * Subtitles inside the file are left off; subtitle files next to the video are drawn by the app.
+ * Subtitle tracks inside the file are drawn by VLC on [setSubtitleSurface] (off until chosen);
+ * subtitle files next to the video are drawn by the app. [hardware]: MediaCodec where it can,
+ * otherwise VLC's own (software) decoders for everything.
  */
 class VlcEngine private constructor(
     private val context: Context,
     private val listener: EngineListener,
     libVlc: LibVLC,
+    private val hardware: Boolean,
 ) : Engine {
     override val name = "vlc"
     private val mp = VlcPlayer(libVlc)
@@ -157,6 +169,9 @@ class VlcEngine private constructor(
     private var width = 0
     private var height = 0
     private var surface: Surface? = null
+    private var subtitleSurface: Surface? = null
+    private var winW = 0
+    private var winH = 0
     private var released = false
 
     private val layout = IVLCVout.OnNewVideoLayoutListener { _, w, h, visibleW, visibleH, sarNum, sarDen ->
@@ -180,7 +195,7 @@ class VlcEngine private constructor(
         } else {
             Media(vlc, item.path)
         }
-        media.setHWDecoderEnabled(true, false)
+        media.setHWDecoderEnabled(hardware, false)
         mp.setMedia(media)
         media.release()
         mp.setEventListener(VlcPlayer.EventListener { e -> if (!released) onEvent(e) })
@@ -196,6 +211,8 @@ class VlcEngine private constructor(
                 if (!prepared) {
                     prepared = true
                     mp.pause()
+                    // Subtitle tracks stay off until chosen, as with Android's player.
+                    mp.setSpuTrack(-1)
                     listener.onPrepared()
                 }
             }
@@ -210,18 +227,37 @@ class VlcEngine private constructor(
     }
 
     override fun setSurface(surface: Surface?, width: Int, height: Int) {
+        this.surface = surface
+        if (width > 0 && height > 0) {
+            winW = width
+            winH = height
+        }
+        attach()
+    }
+
+    override fun setSubtitleSurface(surface: Surface?) {
+        if (surface === subtitleSurface) return
+        subtitleSurface = surface
+        if (this.surface != null) attach()
+    }
+
+    /** VLC takes its surfaces only while detached. */
+    private fun attach() {
         val vout = mp.vlcVout
         if (vout.areViewsAttached()) vout.detachViews()
-        this.surface = surface
-        if (surface == null) return
-        vout.setVideoSurface(surface, null)
-        if (width > 0 && height > 0) vout.setWindowSize(width, height)
+        val video = surface ?: return
+        vout.setVideoSurface(video, null)
+        subtitleSurface?.let { vout.setSubtitlesSurface(it, null) }
+        if (winW > 0 && winH > 0) vout.setWindowSize(winW, winH)
         vout.attachViews(layout)
         mp.setVideoTrackEnabled(true)
     }
 
     override fun setSurfaceSize(width: Int, height: Int) {
-        if (surface != null && width > 0 && height > 0) mp.vlcVout.setWindowSize(width, height)
+        if (width <= 0 || height <= 0) return
+        winW = width
+        winH = height
+        if (surface != null) mp.vlcVout.setWindowSize(width, height)
     }
 
     override fun start() {
@@ -266,12 +302,18 @@ class VlcEngine private constructor(
 
     override fun tracks(): EngineTracks {
         val audio = mp.audioTracks.orEmpty().filter { it.id >= 0 }.map { EngineTrack(it.id, null, null, it.name) }
-        return EngineTracks(audio, mp.audioTrack, emptyList(), hasVideo = true)
+        val subs = mp.spuTracks.orEmpty().filter { it.id >= 0 }.map { EngineTrack(it.id, null, null, it.name) }
+        return EngineTracks(audio, mp.audioTrack, subs, hasVideo = true)
     }
 
     override fun selectAudio(index: Int) = mp.setAudioTrack(index)
-    override fun selectSubtitle(index: Int) = false
-    override fun deselectSubtitle(index: Int) = Unit
+    override fun selectSubtitle(index: Int) = mp.setSpuTrack(index)
+    override fun deselectSubtitle(index: Int) {
+        mp.setSpuTrack(-1)
+    }
+
+    override fun setAudioDelay(ms: Long) = mp.setAudioDelay(ms * 1000)
+    override fun setSubtitleDelay(ms: Long) = mp.setSpuDelay(ms * 1000)
 
     override fun release() {
         released = true
@@ -312,10 +354,10 @@ class VlcEngine private constructor(
             }
         }
 
-        fun create(context: Context, listener: EngineListener): VlcEngine? {
+        fun create(context: Context, listener: EngineListener, hardware: Boolean): VlcEngine? {
             val lib = libVlc(context) ?: return null
             return try {
-                VlcEngine(context, listener, lib)
+                VlcEngine(context, listener, lib, hardware)
             } catch (e: Throwable) {
                 null
             }
@@ -324,9 +366,8 @@ class VlcEngine private constructor(
         private val OPTIONS = arrayListOf(
             // Keeps the pitch when playing faster or slower.
             "--audio-time-stretch",
-            // The app draws subtitle files itself; VLC must not add its own on top.
+            // The app draws subtitle files itself; VLC must not load them a second time.
             "--no-sub-autodetect-file",
-            "--no-spu",
             "--no-stats",
         )
     }
