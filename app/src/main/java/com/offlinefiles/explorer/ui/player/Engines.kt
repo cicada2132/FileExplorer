@@ -6,7 +6,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.view.Surface
+import com.offlinefiles.explorer.core.player.DecoderChoice
 import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.data.UsbDiagnostics
+import org.videolan.libvlc.Dialog
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.interfaces.IVLCVout
@@ -69,6 +72,12 @@ interface Engine {
 
     /** For subtitle tracks inside the file that the engine draws itself. */
     fun setSubtitleDelay(ms: Long): Boolean = false
+
+    /** Decoding with the phone's hardware (MediaCodec) rather than in software. */
+    val hardware: Boolean get() = false
+
+    /** The video codec as a four-character code ("h264", "mp4v"...), once known. */
+    fun videoCodec(): String? = null
 }
 
 /**
@@ -82,7 +91,7 @@ class VlcEngine private constructor(
     private val context: Context,
     private val listener: EngineListener,
     libVlc: LibVLC,
-    private val hardware: Boolean,
+    override val hardware: Boolean,
 ) : Engine {
     override val name = "vlc"
     private val mp = VlcPlayer(libVlc)
@@ -122,6 +131,7 @@ class VlcEngine private constructor(
         } else {
             Media(vlc, item.path)
         }
+        // Hardware where it helps (MediaCodec, then VLC's own decoders if it can't), or software only.
         media.setHWDecoderEnabled(hardware, false)
         mp.setMedia(media)
         media.release()
@@ -149,7 +159,7 @@ class VlcEngine private constructor(
                 ended = true
                 listener.onCompletion()
             }
-            VlcPlayer.Event.EncounteredError -> listener.onError("vlc error")
+            VlcPlayer.Event.EncounteredError -> listener.onError("vlc error" + (takeLastMessage()?.let { ": $it" } ?: ""))
         }
     }
 
@@ -241,6 +251,9 @@ class VlcEngine private constructor(
         mp.setSpuTrack(-1)
     }
 
+    override fun videoCodec(): String? =
+        runCatching { mp.currentVideoTrack }.getOrNull()?.let { DecoderChoice.fourccName(it.fourcc) }
+
     override fun setAudioDelay(ms: Long) = mp.setAudioDelay(ms * 1000)
     override fun setSubtitleDelay(ms: Long) = mp.setSpuDelay(ms * 1000)
 
@@ -276,12 +289,71 @@ class VlcEngine private constructor(
                     System.loadLibrary("c++_shared")
                     System.loadLibrary("vlc")
                     System.loadLibrary("vlcjni")
-                    LibVLC(context.applicationContext, OPTIONS).also { shared = it }
+                    val app = context.applicationContext
+                    LibVLC(app, options()).also {
+                        answerDialogs(app, it)
+                        shared = it
+                    }
                 } catch (e: Throwable) {
                     broken = true
                     null
                 }
             }
+        }
+
+        /**
+         * VLC for Android's own defaults (the setup most phones run VLC with), plus answers to the
+         * questions VLC would otherwise ask in a dialog.
+         */
+        private fun options(): ArrayList<String> = arrayListOf(
+            // Keeps the pitch when playing faster or slower.
+            "--audio-time-stretch",
+            // Software decoding: skip the deblocking filter only on non-reference frames on multi-core
+            // phones (on all but key frames on slow ones), as VLC for Android does.
+            "--avcodec-skiploopfilter", if (Runtime.getRuntime().availableProcessors() > 2) "1" else "3",
+            "--avcodec-skip-frame", "0",
+            "--avcodec-skip-idct", "0",
+            // Software-decoded video is drawn as 32-bit RGB (16-bit shows banding).
+            "--android-display-chroma", "RV32",
+            // AVI files with a broken or missing index (common in downloads): build one in memory
+            // instead of asking "Do not play / Build index / Play as is" in a dialog.
+            "--avi-index=3",
+            // The app draws subtitle files itself; VLC must not load them a second time.
+            "--no-sub-autodetect-file",
+            "--no-stats",
+        )
+
+        @Volatile
+        private var lastMessage: String? = null
+
+        /** The last error VLC reported in a dialog (e.g. "VLC could not decode the format..."), once. */
+        fun takeLastMessage(): String? = lastMessage.also { lastMessage = null }
+
+        /**
+         * There is nobody to answer VLC's dialogs: questions take their first action (the one that
+         * keeps playing), log-ins are declined, and errors go to the diagnostics log.
+         */
+        private fun answerDialogs(context: Context, lib: LibVLC) {
+            Dialog.setCallbacks(lib, object : Dialog.Callbacks {
+                override fun onDisplay(dialog: Dialog.ErrorMessage) {
+                    val text = listOfNotNull(dialog.title, dialog.text).joinToString(": ")
+                    lastMessage = text
+                    UsbDiagnostics.log(context, "vlc error dialog: $text")
+                }
+
+                override fun onDisplay(dialog: Dialog.LoginDialog) {
+                    runCatching { dialog.dismiss() }
+                }
+
+                override fun onDisplay(dialog: Dialog.QuestionDialog) {
+                    UsbDiagnostics.log(context, "vlc question: ${dialog.title}: ${dialog.text} → ${dialog.action1Text}")
+                    runCatching { dialog.postAction(1) }
+                }
+
+                override fun onDisplay(dialog: Dialog.ProgressDialog) = Unit
+                override fun onCanceled(dialog: Dialog?) = Unit
+                override fun onProgressUpdate(dialog: Dialog.ProgressDialog) = Unit
+            })
         }
 
         fun create(context: Context, listener: EngineListener, hardware: Boolean): VlcEngine? {
@@ -292,14 +364,6 @@ class VlcEngine private constructor(
                 null
             }
         }
-
-        private val OPTIONS = arrayListOf(
-            // Keeps the pitch when playing faster or slower.
-            "--audio-time-stretch",
-            // The app draws subtitle files itself; VLC must not load them a second time.
-            "--no-sub-autodetect-file",
-            "--no-stats",
-        )
     }
 }
 

@@ -234,14 +234,13 @@
     <string name="viewer_open_player">플레이어</string>
     <string name="settings_videos_in_viewer">사진·동영상 함께 넘겨 보기</string>
     <string name="settings_videos_in_viewer_desc">파일 목록에서 동영상을 누르면 사진 뷰어에서 바로 재생하고, 넘기면 다음 사진이나 동영상을 봅니다</string>
-    <string name="settings_player_in_app">동영상·음악을 앱에서 재생</string>
-    <string name="settings_player_in_app_desc">파일 목록이나 갤러리에서 동영상·음악을 누르면 내장 플레이어로 재생합니다</string>
     <string name="settings_resume">이어서 재생</string>
     <string name="settings_resume_desc">동영상(과 10분이 넘는 음성 파일)을 마지막으로 본 위치부터 재생합니다</string>
     <string name="action_pause">일시정지</string>
     <string name="player_next">다음</string>
     <string name="player_previous">이전</string>
     <string name="player_replay">다시 재생</string>
+    <string name="player_retry">다시 시도</string>
     <string name="player_next_file">다음 파일</string>
     <string name="player_lock">조작 잠금</string>
     <string name="player_unlock">눌러서 잠금 해제</string>
@@ -278,9 +277,8 @@
     <string name="player_audio_sync">오디오 싱크</string>
     <string name="player_audio_sync_hint">소리가 화면보다 빠르면 +, 늦으면 −. 값을 누르면 0으로 돌아갑니다.</string>
     <string name="player_decoding">디코딩</string>
-    <string name="player_decoding_hw">하드웨어 (눌러서 소프트웨어)</string>
-    <string name="player_decoding_sw">소프트웨어 (눌러서 하드웨어)</string>
-    <string name="player_open_other">다른 앱으로 열기</string>
+    <string name="player_decoding_hw">자동 (눌러서 소프트웨어)</string>
+    <string name="player_decoding_sw">소프트웨어 (눌러서 자동)</string>
     <string name="player_info_format">형식</string>
     <string name="player_info_artist">아티스트</string>
     <string name="player_info_album">앨범</string>
@@ -298,7 +296,7 @@
     <string name="player_resumed">%s부터 이어서 재생</string>
     <string name="player_start_over">처음부터</string>
     <string name="player_error_title">내장 플레이어로 재생할 수 없는 파일입니다</string>
-    <string name="player_error_body">이 기기가 지원하지 않는 형식이거나 파일이 손상되었습니다.</string>
+    <string name="player_error_body">VLC가 자체 디코더로도 재생하지 못했습니다. 파일이 손상됐거나, 덜 받아졌거나, 아직 복사 중일 수 있습니다.</string>
     <string name="aspect_fit">화면에 맞춤</string>
     <string name="aspect_fill">잘라서 채우기</string>
     <string name="aspect_stretch">늘리기</string>

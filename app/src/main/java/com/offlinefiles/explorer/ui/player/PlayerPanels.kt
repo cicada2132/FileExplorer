@@ -33,7 +33,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
@@ -171,11 +170,6 @@ fun BoxScope.PlayerPanels(
             val item = s.current
             if (item != null) {
                 ActionRow(Icons.Filled.Info, stringResource(R.string.action_details), null) { onPanel(Panel.INFO) }
-                ActionRow(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.player_open_other), null) {
-                    p.pause()
-                    close()
-                    vm.openWith(item.path)
-                }
                 ActionRow(Icons.Filled.Share, stringResource(R.string.action_share), null) {
                     p.pause()
                     close()

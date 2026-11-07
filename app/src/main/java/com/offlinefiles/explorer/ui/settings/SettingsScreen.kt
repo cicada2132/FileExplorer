@@ -35,7 +35,6 @@ import androidx.compose.material.icons.filled.FolderCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Usb
@@ -129,10 +128,7 @@ fun SettingsScreen(vm: MainViewModel) {
                 vm.updateSettings { it.copy(openMediaInApp = on) }
             }
             Section(stringResource(R.string.settings_player))
-            SwitchRow(Icons.Filled.PlayCircle, stringResource(R.string.settings_player_in_app), stringResource(R.string.settings_player_in_app_desc), s.playerInApp) { on ->
-                vm.updateSettings { it.copy(playerInApp = on) }
-            }
-            if (s.playerInApp && s.openMediaInApp) {
+            if (s.openMediaInApp) {
                 SwitchRow(Icons.Filled.ViewCarousel, stringResource(R.string.settings_videos_in_viewer), stringResource(R.string.settings_videos_in_viewer_desc), s.videosInViewer) { on ->
                     vm.updateSettings { it.copy(videosInViewer = on) }
                 }
@@ -159,7 +155,7 @@ fun SettingsScreen(vm: MainViewModel) {
             if (diagnostics) UsbDiagnosticsDialog(onDismiss = { diagnostics = false })
             Section(stringResource(R.string.settings_about))
             InfoRow(Icons.Filled.WifiOff, stringResource(R.string.settings_offline), stringResource(R.string.settings_offline_desc))
-            InfoRow(Icons.Filled.Info, stringResource(R.string.settings_version), BuildConfig.VERSION_NAME)
+            InfoRow(Icons.Filled.Info, stringResource(R.string.settings_version), "${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_ID})")
             InfoRow(Icons.Filled.Description, stringResource(R.string.licenses_title), stringResource(R.string.licenses_desc), onClick = vm::openLicenses)
             Spacer(Modifier.height(24.dp))
         }

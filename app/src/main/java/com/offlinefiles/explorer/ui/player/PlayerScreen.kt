@@ -1186,9 +1186,21 @@ private fun BoxScope.ErrorLayer(vm: MainViewModel, s: PlayerUi) {
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
         )
+        // VLC's own words, for a report (also in Settings › Diagnostics).
+        s.errorDetail?.let { detail ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                detail,
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                maxLines = 4,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { vm.openWith(item.path) }) { Text(stringResource(R.string.player_open_other), color = Color.White) }
+            // Tries again with VLC's own (software) decoders; no other app is involved.
+            OutlinedButton(onClick = vm.player::reload) { Text(stringResource(R.string.player_retry), color = Color.White) }
             if (s.canNext) OutlinedButton(onClick = vm.player::next) { Text(stringResource(R.string.player_next_file), color = Color.White) }
         }
     }

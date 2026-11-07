@@ -61,7 +61,9 @@ import androidx.compose.foundation.Image
 import com.offlinefiles.explorer.R
 import com.offlinefiles.explorer.core.gallery.MediaDates
 import com.offlinefiles.explorer.core.gallery.MediaItem
+import com.offlinefiles.explorer.App
 import com.offlinefiles.explorer.core.player.AspectMode
+import com.offlinefiles.explorer.core.player.DecoderChoice
 import com.offlinefiles.explorer.core.player.VideoLayout
 import com.offlinefiles.explorer.data.UsbDiagnostics
 import com.offlinefiles.explorer.ui.player.Engine
@@ -102,6 +104,8 @@ class InlinePlayer(private val context: Context) {
     private var surfaceH = 0
     private val audio = context.getSystemService(AudioManager::class.java)
     private var focus: AudioFocusRequest? = null
+    /** Reopened with VLC's own decoders after hardware decoding failed. */
+    private var softwareOnly = false
 
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -111,10 +115,11 @@ class InlinePlayer(private val context: Context) {
     fun start(item: MediaItem) {
         if (this.item?.path == item.path && engine != null) return
         this.item = item
-        load()
+        load(software = false)
     }
 
-    private fun load() {
+    /** The same rule as the full player: hardware only for modern codecs, AVI/MPG/WMV... in software. */
+    private fun load(software: Boolean) {
         val item = item ?: return
         engine?.let { e -> runCatching { e.release() } }
         engine = null
@@ -130,6 +135,10 @@ class InlinePlayer(private val context: Context) {
 
             override fun onPrepared() {
                 if (!mine()) return
+                if (e.hardware && !DecoderChoice.hardwareSuits(runCatching { e.videoCodec() }.getOrNull())) {
+                    load(software = true)
+                    return
+                }
                 prepared = true
                 durationMs = runCatching { e.duration }.getOrDefault(0L).coerceAtLeast(0L)
                 val w = runCatching { e.videoWidth }.getOrDefault(0)
@@ -167,7 +176,10 @@ class InlinePlayer(private val context: Context) {
             override fun onTimedText(text: String?) = Unit
             override fun onTracksChanged() = Unit
         }
-        val created = Engines.create(context, listener, hardware = true)
+        softwareOnly = software
+        val hwPreferred = (context.applicationContext as? App)?.playerStore?.hwDecoding ?: true
+        val hardware = hwPreferred && !software && DecoderChoice.hardwareFirst(item.name)
+        val created = Engines.create(context, listener, hardware)
         if (created == null) {
             UsbDiagnostics.log(context, "viewer: VLC unavailable for ${item.name}")
             error = true
@@ -183,7 +195,11 @@ class InlinePlayer(private val context: Context) {
     }
 
     private fun fail(e: Engine, detail: String) {
-        UsbDiagnostics.log(context, "viewer ${e.name} ${item?.name}: $detail")
+        UsbDiagnostics.log(context, "viewer ${e.name}${if (e.hardware) " (hardware)" else ""} ${item?.name}: $detail")
+        if (e.hardware && !softwareOnly) {
+            load(software = true)
+            return
+        }
         error = true
         playing = false
         abandonFocus()

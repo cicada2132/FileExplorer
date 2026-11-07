@@ -28,6 +28,7 @@ import com.offlinefiles.explorer.core.ListResult
 import com.offlinefiles.explorer.data.StorageVolumes
 import com.offlinefiles.explorer.data.SubtitleChoice
 import com.offlinefiles.explorer.core.player.AspectMode
+import com.offlinefiles.explorer.core.player.DecoderChoice
 import com.offlinefiles.explorer.core.player.PlayQueue
 import com.offlinefiles.explorer.core.player.PlaybackSpeed
 import com.offlinefiles.explorer.core.player.RepeatMode
@@ -88,6 +89,8 @@ data class PlayerUi(
     val playing: Boolean = false,
     val ended: Boolean = false,
     val error: Boolean = false,
+    /** What VLC said when the file couldn't be played, if anything. */
+    val errorDetail: String? = null,
     /** The video has drawn its first frame (until then the still frame stands in). */
     val firstFrame: Boolean = false,
     val durationMs: Long = 0,
@@ -165,6 +168,11 @@ class PlayerModel(
     private var appliedSpeed = 1f
     private var ticker: Job? = null
     private var sidecarJob: Job? = null
+    /** Retries in software when hardware decoding shows no picture (see [play]). */
+    private var watchdog: Job? = null
+    private var autoplayCurrent = true
+    /** The file on screen was reopened with VLC's software decoders after hardware decoding failed. */
+    private var softwareOnly = false
 
     private var seekInFlightSince = 0L
     private var pendingSeek: Pair<Long, Boolean>? = null
@@ -234,7 +242,11 @@ class PlayerModel(
         if (paths.any { path == it || path.startsWith("$it/") }) close()
     }
 
-    private fun load(index: Int, autoplay: Boolean = true) {
+    /**
+     * [software]: VLC's own decoders only (a retry after hardware decoding failed, or the user's
+     * choice). [startAt] overrides the remembered resume point (a retry carries on where it was).
+     */
+    private fun load(index: Int, autoplay: Boolean = true, software: Boolean = false, startAt: Long? = null) {
         val s = _ui.value ?: return
         val item = s.queue.getOrNull(index) ?: return
         stopCurrent()
@@ -249,14 +261,18 @@ class PlayerModel(
         _subtitleText.value = null
         _position.value = 0
         _ui.value = s.copy(
-            index = index, loadId = id, prepared = false, playing = false, ended = false, error = false,
+            index = index, loadId = id, prepared = false, playing = false, ended = false, error = false, errorDetail = null,
             firstFrame = false, durationMs = 0, videoW = 0, videoH = 0, boost = false, abA = null, abB = null,
             audioTracks = emptyList(), audioTrack = -1, subtitles = emptyList(), subtitle = null, subtitleDelayMs = 0,
             resumedFrom = null, meta = null, engine = "", audioDelayMs = 0,
             canNext = PlayQueue.step(order, index, 1, s.repeat) != null,
             canPrevious = PlayQueue.step(order, index, -1, s.repeat) != null,
         )
-        val resumeAt = if (resumeEnabled()) store.position(item.path) else null
+        val resumeAt = startAt ?: if (resumeEnabled()) store.position(item.path) else null
+        autoplayCurrent = autoplay
+        softwareOnly = software
+        // Hardware decoding only for the modern codecs it handles well; AVI, MPG, WMV... in software.
+        val hardware = store.hwDecoding && !software && DecoderChoice.hardwareFirst(item.name)
         lateinit var engine: Engine
         val listener = object : EngineListener {
             private fun mine() = player === engine
@@ -295,7 +311,7 @@ class PlayerModel(
                 if (mine() && prepared) applyTracks(engine)
             }
         }
-        val created = Engines.create(context, listener, store.hwDecoding)
+        val created = Engines.create(context, listener, hardware)
         if (created == null) {
             // VLC's native code can't run on this device: nothing can play here.
             UsbDiagnostics.log(context, "player: VLC unavailable for ${item.name}")
@@ -321,9 +337,21 @@ class PlayerModel(
     }
 
     private fun onEngineError(engine: Engine, detail: String) {
-        val item = _ui.value?.current ?: return
-        UsbDiagnostics.log(context, "player ${engine.name} ${item.name}: $detail")
-        onError()
+        val s = _ui.value ?: return
+        val item = s.current ?: return
+        UsbDiagnostics.log(context, "player ${engine.name}${if (engine.hardware) " (hardware)" else ""} ${item.name}: $detail")
+        // Hardware decoding failed: VLC's own decoders get the file once more, from where it was.
+        if (engine.hardware && !softwareOnly) {
+            retryInSoftware(s.index, _position.value.takeIf { it > 0 })
+            return
+        }
+        onError(detail.substringAfter("vlc error", "").removePrefix(":").trim().ifBlank { null })
+    }
+
+    private fun retryInSoftware(index: Int, at: Long?) {
+        // Not a real stop: keep the remembered resume point as it is.
+        prepared = false
+        load(index, autoplayCurrent, software = true, startAt = at)
     }
 
     /** VLC: hardware decoders on or off; the current file reopens where it was. */
@@ -357,6 +385,8 @@ class PlayerModel(
     private fun stopCurrent() {
         saveResume()
         sidecarJob?.cancel()
+        watchdog?.cancel()
+        watchdog = null
         val mp = player ?: return
         player = null
         prepared = false
@@ -367,6 +397,16 @@ class PlayerModel(
 
     private fun onPrepared(mp: Engine, autoplay: Boolean, resumeAt: Long?) {
         prepared = true
+        // Opened with hardware decoding, but the video turns out to be an older codec (DivX in MKV,
+        // MPEG-2 in TS...): reopen it with VLC's own decoders before anything is shown.
+        if (mp.hardware && _ui.value?.isVideo == true) {
+            val codec = runCatching { mp.videoCodec() }.getOrNull()
+            if (!DecoderChoice.hardwareSuits(codec)) {
+                UsbDiagnostics.log(context, "player: video codec $codec → software decoding")
+                retryInSoftware(_ui.value!!.index, resumeAt)
+                return
+            }
+        }
         val duration = runCatching { mp.duration }.getOrDefault(0L).coerceAtLeast(0L)
         val item = _ui.value?.current
         val resume = resumeAt?.takeIf {
@@ -425,9 +465,9 @@ class PlayerModel(
         updateSession()
     }
 
-    private fun onError() {
+    private fun onError(detail: String? = null) {
         prepared = false
-        update { it.copy(error = true, playing = false, prepared = false, boost = false) }
+        update { it.copy(error = true, errorDetail = detail, playing = false, prepared = false, boost = false) }
         abandonFocus()
         updateSession()
     }
@@ -451,6 +491,21 @@ class PlayerModel(
         applySpeed(mp, if (s.boost) BOOST_SPEED else s.speed)
         update { it.copy(playing = true, ended = false) }
         updateSession()
+        watchForPicture(mp)
+    }
+
+    /** Hardware decoding that shows no picture after a few seconds of playing: reopen in software. */
+    private fun watchForPicture(mp: Engine) {
+        val s = _ui.value ?: return
+        if (!mp.hardware || !s.isVideo || s.firstFrame || watchdog != null) return
+        val id = loadCounter
+        watchdog = scope.launch {
+            delay(NO_PICTURE_TIMEOUT_MS)
+            val now = _ui.value ?: return@launch
+            if (loadCounter != id || player !== mp || !prepared || now.firstFrame || now.error) return@launch
+            UsbDiagnostics.log(context, "player: no picture after ${NO_PICTURE_TIMEOUT_MS / 1000}s with hardware decoding → software")
+            retryInSoftware(now.index, _position.value.takeIf { it > 0 })
+        }
     }
 
     fun pause() {
@@ -528,7 +583,8 @@ class PlayerModel(
     /** Retry after an error, e.g. once the storage is back. */
     fun reload() {
         val s = _ui.value ?: return
-        load(s.index)
+        // After an error: VLC's own (software) decoders, the most forgiving way to read a file.
+        load(s.index, software = true)
     }
 
     // ------------------------------------------------------------------ playback options
@@ -1189,6 +1245,7 @@ class PlayerModel(
         const val SEEK_STEP_MS = 10_000L
         const val MAX_SUBTITLE_DELAY = 60_000L
         const val MAX_AUDIO_DELAY = 10_000L
+        private const val NO_PICTURE_TIMEOUT_MS = 6_000L
         private const val AB_MIN_MS = 500L
         private const val SEEK_TIMEOUT_MS = 1_500L
         private const val DUCK_VOLUME = 0.3f

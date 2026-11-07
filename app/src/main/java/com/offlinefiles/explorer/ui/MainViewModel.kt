@@ -503,9 +503,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ArchiveFormats.typeOf(item.name) != null -> dialog.value = DialogState.ArchiveActions(item)
             item.kind == FileKind.IMAGE && settings.value.openMediaInApp -> openFolderViewer(item)
             // Photos and videos together: the video plays in the viewer and a swipe moves on to the next photo.
-            item.kind == FileKind.VIDEO && settings.value.playerInApp && settings.value.openMediaInApp &&
-                settings.value.videosInViewer -> openFolderViewer(item)
-            isPlayable(item.kind) && settings.value.playerInApp -> openFolderPlayer(item)
+            item.kind == FileKind.VIDEO && settings.value.openMediaInApp && settings.value.videosInViewer -> openFolderViewer(item)
+            // Videos and music always play here (VLC), never in another app.
+            isPlayable(item.kind) -> openFolderPlayer(item)
             else -> eventChannel.trySend(UiEvent.Open(item.path))
         }
     }
@@ -522,7 +522,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun openFolderViewer(item: FileItem) {
         val media = visibleItems.value.mapNotNull { it.toMediaItem() }
         if (media.none { it.path == item.path }) {
-            eventChannel.trySend(UiEvent.Open(item.path)); return
+            if (isPlayable(item.kind)) openFolderPlayer(item) else eventChannel.trySend(UiEvent.Open(item.path))
+            return
         }
         gallery.openViewer(media, item.path)
     }
@@ -553,9 +554,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         dialog.value = DialogState.ItemActions(item)
     }
 
-    fun openWith(path: String) = eventChannel.trySend(UiEvent.Open(path, chooser = true))
+    /** Another app for files this app doesn't open itself. Videos and music are never handed out: they play here. */
+    fun openWith(path: String) {
+        val kind = FileTypes.kindOf(File(path).name)
+        if (isPlayable(kind)) playOne(path, video = kind == FileKind.VIDEO)
+        else eventChannel.trySend(UiEvent.Open(path, chooser = true))
+    }
 
-    fun openAs(path: String, mime: String) = eventChannel.trySend(UiEvent.Open(path, mime = mime))
+    /** "Open as" for a file with no known type: as video or audio it plays here (VLC tries any file). */
+    fun openAs(path: String, mime: String) {
+        when {
+            mime.startsWith("video/") -> playOne(path, video = true)
+            mime.startsWith("audio/") -> playOne(path, video = false)
+            else -> eventChannel.trySend(UiEvent.Open(path, mime = mime))
+        }
+    }
+
+    private fun playOne(path: String, video: Boolean) {
+        player.open(listOf(PlayItem(path, File(path).name, video)), path)
+    }
 
     fun share(paths: List<String>) {
         if (paths.any(Stores::isDocument)) {
@@ -584,15 +601,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------ gallery actions
 
-    /**
-     * Plays a video from the photo viewer: in the built-in player with the other videos of
-     * [around] queued up, or in another app when the setting is off.
-     */
+    /** Plays a video from the photo viewer in the full player, with the other videos of [around] queued up. */
     fun openMedia(item: MediaItem, around: List<MediaItem> = listOf(item), positionMs: Long = 0L) {
-        if (!settings.value.playerInApp) {
-            eventChannel.trySend(UiEvent.Open(item.path, mime = item.mime.ifBlank { null }))
-            return
-        }
         val queue = around.filter { it.isVideo }.ifEmpty { listOf(item) }.map { PlayItem(it.path, it.name, it.isVideo) }
         // Carry on where the viewer's in-place playback got to.
         if (positionMs > 0 && settings.value.resumePlayback) app.playerStore.remember(item.path, positionMs)
@@ -924,7 +934,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun openExtracted(path: String) {
         val f = File(path)
         val kind = FileTypes.kindOf(f.name)
-        if (isPlayable(kind) && settings.value.playerInApp) {
+        if (isPlayable(kind)) {
             player.open(listOf(PlayItem(path, f.name, kind == FileKind.VIDEO)), path)
         } else {
             eventChannel.trySend(UiEvent.Open(path))

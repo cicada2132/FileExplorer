@@ -22,8 +22,6 @@ data class Settings(
     val openMediaInApp: Boolean = true,
     /** Gallery thumbnail size: 0 small, 1 medium, 2 large. */
     val galleryZoom: Int = 1,
-    /** Videos and music play in the built-in player instead of another app. */
-    val playerInApp: Boolean = true,
     /** The player starts each video where it was left off. */
     val resumePlayback: Boolean = true,
     /** Videos in the file list open in the photo viewer (playing in place) with the folder's photos. */
@@ -51,7 +49,6 @@ class Prefs(context: Context) {
             .putBoolean("dynamic_color", next.dynamicColor)
             .putBoolean("open_media_in_app", next.openMediaInApp)
             .putInt("gallery_zoom", next.galleryZoom)
-            .putBoolean("player_in_app", next.playerInApp)
             .putBoolean("resume_playback", next.resumePlayback)
             .putBoolean("videos_in_viewer", next.videosInViewer)
             .apply()
@@ -72,7 +69,6 @@ class Prefs(context: Context) {
             dynamicColor = sp.getBoolean("dynamic_color", d.dynamicColor),
             openMediaInApp = sp.getBoolean("open_media_in_app", d.openMediaInApp),
             galleryZoom = sp.getInt("gallery_zoom", d.galleryZoom).coerceIn(0, 2),
-            playerInApp = sp.getBoolean("player_in_app", d.playerInApp),
             resumePlayback = sp.getBoolean("resume_playback", d.resumePlayback),
             videosInViewer = sp.getBoolean("videos_in_viewer", d.videosInViewer),
         )

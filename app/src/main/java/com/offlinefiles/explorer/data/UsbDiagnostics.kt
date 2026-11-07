@@ -35,7 +35,7 @@ object UsbDiagnostics {
     }
 
     fun report(context: Context): String = buildString {
-        appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+        appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}, ${BuildConfig.BUILD_ID})")
         appendLine("Device ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         appendLine("All files access: ${StoragePermission.isGranted(context)}")
         appendLine()

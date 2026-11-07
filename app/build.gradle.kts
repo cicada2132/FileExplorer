@@ -7,6 +7,19 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Which commit an APK was built from, shown in Settings › Version so a tester can tell builds apart.
+fun gitOutput(vararg args: String): String = runCatching {
+    providers.exec {
+        commandLine("git", *args)
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim()
+}.getOrDefault("")
+
+val buildId: String = listOf(
+    gitOutput("rev-parse", "--short", "HEAD"),
+    gitOutput("log", "-1", "--format=%cd", "--date=format:%m-%d %H:%M"),
+).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { "dev" }
+
 // Upload-key signing for Play. Values live in keystore.properties (never commit it).
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
@@ -23,6 +36,7 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "1.1.0"
+        buildConfigField("String", "BUILD_ID", "\"$buildId\"")
         // libVLC ships native code for each CPU type. 32-bit x86 (old emulators only) is left out.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }

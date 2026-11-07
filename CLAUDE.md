@@ -8,7 +8,7 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 65 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 66 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
@@ -34,6 +34,12 @@ User-facing docs (Korean) are in `README.md`.
   switched off (owner's decision). `Engines.factory` makes the engine: VLC in the app; `PlayerFlowTest` swaps in
   `MediaPlayerEngine` (test sources, Robolectric's `ShadowMediaPlayer`) because libVLC can't load on a PC.
   Never let `LibVLC` load its natives itself (it calls `System.exit` on failure) — `VlcEngine` loads them first.
+  Videos/music never go to other apps (no in-app/external setting; no "Open with" for them; `openWith`/`openAs`
+  play media in the app). VLC options follow VLC for Android's defaults plus `--avi-index=3`; VLC dialogs are
+  answered by `VlcEngine.answerDialogs` (errors logged to diagnostics). `core/player` `DecoderChoice`: hardware only
+  for h264/hevc/vp8/vp9/av1, legacy containers (avi, mpg, vob, wmv, flv, rmvb, 3gp...) in software; `PlayerModel`
+  and `InlinePlayer` retry in software on error, on a legacy codec at prepare, or (full player) on no picture in 6 s.
+  Settings › Version shows `BuildConfig.BUILD_ID` (commit hash + time) so a tester can tell builds apart.
 - Subtitles: files next to the video (USB document trees copied to the cache), a file picked by hand
   (`PlayerModel.addSubtitleFile`, system picker), and the choice per video in `PlayerStore.subtitleChoice`;
   then a Korean embedded track (`autoSelectEmbedded`). Matching rules are in `core/player/Subtitles.kt`.
@@ -42,7 +48,7 @@ User-facing docs (Korean) are in `README.md`.
 - `ui/gallery/InlineVideo.kt`: videos play in place in the photo viewer (same engines); file-list videos open there
   when `Settings.videosInViewer` (default on). Tests that drive the full player from the list turn it off.
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 9, `PlayerFlowTest` 6
+  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 10, `PlayerFlowTest` 6
 
 ## USB drives
 

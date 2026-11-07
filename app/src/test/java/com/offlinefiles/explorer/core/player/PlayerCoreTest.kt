@@ -252,4 +252,29 @@ class PlayerCoreTest {
         assertEquals("Hi", sami[Subtitles.preferredTrack(sami, "en")].textAt(100))
         assertEquals(0, Subtitles.preferredTrack(sami, "ja"))
     }
+
+    @Test
+    fun decoderChoice() {
+        // Old formats go to VLC's own decoders; modern containers try the phone's hardware first.
+        for (n in listOf("옛날 영상.AVI", "clip.divx", "tv.mpg", "dvd.VOB", "a.mpeg", "b.wmv", "c.flv", "d.rmvb", "e.3gp")) {
+            assertFalse(n, DecoderChoice.hardwareFirst(n))
+        }
+        for (n in listOf("movie.mp4", "movie.MKV", "clip.webm", "a.mov", "b.ts", "c.m2ts", "noext")) {
+            assertTrue(n, DecoderChoice.hardwareFirst(n))
+        }
+        // What VLC finds inside decides too: DivX in an MKV is decoded in software.
+        assertTrue(DecoderChoice.hardwareSuits("h264"))
+        assertTrue(DecoderChoice.hardwareSuits("hevc"))
+        assertTrue(DecoderChoice.hardwareSuits("VP90"))
+        assertTrue(DecoderChoice.hardwareSuits("av01"))
+        assertTrue(DecoderChoice.hardwareSuits(null))
+        assertFalse(DecoderChoice.hardwareSuits("mp4v"))
+        assertFalse(DecoderChoice.hardwareSuits("mpgv"))
+        assertFalse(DecoderChoice.hardwareSuits("WMV3"))
+        // VLC's codec numbers are four characters, lowest byte first.
+        fun fourcc(s: String) = s.foldIndexed(0) { i, acc, c -> acc or (c.code shl (8 * i)) }
+        assertEquals("h264", DecoderChoice.fourccName(fourcc("h264")))
+        assertEquals("mp4v", DecoderChoice.fourccName(fourcc("mp4v")))
+        assertNull(DecoderChoice.fourccName(0))
+    }
 }

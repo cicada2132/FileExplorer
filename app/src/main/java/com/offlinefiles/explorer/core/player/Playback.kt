@@ -134,3 +134,36 @@ object PlayerTime {
         return (fraction * perWidth).toLong()
     }
 }
+
+/**
+ * How VLC decodes a file. Phone hardware (MediaCodec) is fast and saves battery on the codecs of
+ * today's videos, but often fails, stalls or shows green garbage on older ones (DivX/Xvid, MPEG-1/2,
+ * WMV/VC-1, H.263, RealVideo...), which VLC's own FFmpeg decoders play reliably. This is the split
+ * VLC users are usually told to make by hand ("turn hardware acceleration off for AVI").
+ */
+object DecoderChoice {
+    /** Containers that nearly always hold older codecs: decoded in software from the start. */
+    private val SOFTWARE_FIRST = setOf(
+        "avi", "divx", "xvid", "mpg", "mpeg", "mpe", "m1v", "m2v", "mpv", "vob", "dat",
+        "wmv", "asf", "flv", "f4v", "rm", "rmvb", "ogm", "dv", "3gp", "3g2",
+    )
+
+    /** Video codecs (VLC's four-character codes) that phone hardware decodes reliably. */
+    private val HARDWARE_CODECS = setOf("h264", "avc1", "hevc", "hev1", "hvc1", "vp80", "vp08", "vp90", "vp09", "av01")
+
+    fun hardwareFirst(fileName: String): Boolean =
+        fileName.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) !in SOFTWARE_FIRST
+
+    /** False when the video codec found while opening is better decoded in software. Unknown: true. */
+    fun hardwareSuits(codec: String?): Boolean {
+        val c = codec?.trim()?.lowercase(java.util.Locale.ROOT)
+        return c.isNullOrEmpty() || c in HARDWARE_CODECS
+    }
+
+    /** VLC's codec number as its four characters ("h264", "mp4v", "mpgv", "WMV3"...). */
+    fun fourccName(fourcc: Int): String? {
+        if (fourcc == 0) return null
+        val chars = (0 until 4).map { ((fourcc ushr (8 * it)) and 0xFF).toChar() }
+        return chars.joinToString("").takeIf { s -> s.all { it.code in 0x20..0x7E } }?.trimEnd()
+    }
+}

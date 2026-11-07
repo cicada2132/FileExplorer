@@ -80,6 +80,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.offlinefiles.explorer.R
+import com.offlinefiles.explorer.core.FileKind
 import com.offlinefiles.explorer.core.FileItem
 import com.offlinefiles.explorer.core.archive.ArchiveFormats
 import com.offlinefiles.explorer.data.StorageVolumes
@@ -313,7 +314,7 @@ fun SelectionBottomBar(vm: MainViewModel, selection: Set<String>, items: List<Fi
                             more = false; vm.showDialog(DialogState.ArchiveActions(single))
                         }
                     }
-                    if (single != null && !single.isDirectory) {
+                    if (single != null && !single.isDirectory && single.kind != FileKind.VIDEO && single.kind != FileKind.AUDIO) {
                         MenuItem(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.action_open_with)) {
                             more = false; vm.clearSelection(); vm.openWith(single.path)
                         }

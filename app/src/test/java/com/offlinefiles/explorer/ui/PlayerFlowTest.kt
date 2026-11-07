@@ -286,14 +286,15 @@ class PlayerFlowTest {
         assertEquals(1, vm.player.ui.value!!.index)
         compose.runOnIdle { vm.player.close() }
 
-        // With the setting off, videos go to another app as before.
-        compose.runOnIdle { vm.updateSettings { it.copy(playerInApp = false) } }
-        compose.runOnIdle { vm.openMedia(clips[0], clips) }
+        // Videos never go to another app: "Open with" and "Open as video" play them here too.
         openFolder(vm, trip)
-        compose.runOnIdle { vm.onItemClick(vm.visibleItems.value.first { it.name == "03_우도.mkv" }) }
-        settle()
-        assertNull(vm.player.ui.value)
-        compose.runOnIdle { vm.updateSettings { it.copy(playerInApp = true) } }
+        val island = File(trip, "03_우도.mkv").path
+        compose.runOnIdle { vm.openWith(island) }
+        waitFor { vm.player.ui.value?.current?.name == "03_우도.mkv" && vm.player.ui.value?.prepared == true }
+        compose.runOnIdle { vm.player.close() }
+        compose.runOnIdle { vm.openAs(island, "video/*") }
+        waitFor { vm.player.ui.value?.prepared == true }
+        compose.runOnIdle { vm.player.close() }
 
         // Deleting the file on screen closes the player.
         compose.runOnIdle { vm.onItemClick(vm.visibleItems.value.first { it.name == "03_우도.mkv" }) }

@@ -234,14 +234,13 @@
     <string name="viewer_open_player">Player</string>
     <string name="settings_videos_in_viewer">Photos and videos together</string>
     <string name="settings_videos_in_viewer_desc">Videos in the file list play in the photo viewer; swipe to the next photo or video</string>
-    <string name="settings_player_in_app">Play videos and music in this app</string>
-    <string name="settings_player_in_app_desc">Tap a video or song in the file list or gallery to play it in the built-in player</string>
     <string name="settings_resume">Resume playback</string>
     <string name="settings_resume_desc">Start videos (and recordings longer than 10 minutes) where you left off</string>
     <string name="action_pause">Pause</string>
     <string name="player_next">Next</string>
     <string name="player_previous">Previous</string>
     <string name="player_replay">Replay</string>
+    <string name="player_retry">Try again</string>
     <string name="player_next_file">Next file</string>
     <string name="player_lock">Lock controls</string>
     <string name="player_unlock">Tap to unlock</string>
@@ -278,9 +277,8 @@
     <string name="player_audio_sync">Audio sync</string>
     <string name="player_audio_sync_hint">Sound ahead of the picture: +. Sound behind: −. Tap the value to reset.</string>
     <string name="player_decoding">Decoding</string>
-    <string name="player_decoding_hw">Hardware (tap for software)</string>
-    <string name="player_decoding_sw">Software (tap for hardware)</string>
-    <string name="player_open_other">Open in another app</string>
+    <string name="player_decoding_hw">Automatic (tap for software)</string>
+    <string name="player_decoding_sw">Software (tap for automatic)</string>
     <string name="player_info_format">Format</string>
     <string name="player_info_artist">Artist</string>
     <string name="player_info_album">Album</string>
@@ -298,7 +296,7 @@
     <string name="player_resumed">Resumed at %s</string>
     <string name="player_start_over">Start over</string>
     <string name="player_error_title">This file can’t be played here</string>
-    <string name="player_error_body">Its format isn’t supported on this device, or the file is damaged.</string>
+    <string name="player_error_body">VLC couldn’t play it, even with its own decoders. The file may be damaged, incomplete or still copying.</string>
     <string name="aspect_fit">Fit to screen</string>
     <string name="aspect_fill">Crop to fill</string>
     <string name="aspect_stretch">Stretch</string>
