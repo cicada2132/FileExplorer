@@ -34,6 +34,7 @@ import com.offlinefiles.explorer.core.archive.CompressionLevel
 import com.offlinefiles.explorer.core.gallery.MediaItem
 import com.offlinefiles.explorer.core.gallery.toMediaItem
 import com.offlinefiles.explorer.data.CrashLog
+import com.offlinefiles.explorer.data.VlcSafety
 import com.offlinefiles.explorer.data.FileIntents
 import com.offlinefiles.explorer.data.GrantResult
 import com.offlinefiles.explorer.data.Settings
@@ -234,7 +235,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var viewerArchive: Pair<String, DocumentStaging.Staged>? = null
 
     init {
-        if (CrashLog.takeUnseen(app)) message(R.string.msg_crashed_last_time)
+        if (VlcSafety.takeUnseen(app)) message(R.string.msg_vlc_turned_off)
+        else if (CrashLog.takeUnseen(app)) message(R.string.msg_crashed_last_time)
         refreshVolumes()
         viewModelScope.launch {
             combine(rawListing, settings.map { it.sort to it.showHidden }.distinctUntilChanged()) { raw, opts ->
@@ -502,6 +504,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             item.isDirectory -> openDir(item.path)
             ArchiveFormats.typeOf(item.name) != null -> dialog.value = DialogState.ArchiveActions(item)
             item.kind == FileKind.IMAGE && settings.value.openMediaInApp -> openFolderViewer(item)
+            // Photos and videos together: the video plays in the viewer and a swipe moves on to the next photo.
+            item.kind == FileKind.VIDEO && settings.value.playerInApp && settings.value.openMediaInApp &&
+                settings.value.videosInViewer -> openFolderViewer(item)
             isPlayable(item.kind) && settings.value.playerInApp -> openFolderPlayer(item)
             else -> eventChannel.trySend(UiEvent.Open(item.path))
         }
@@ -585,12 +590,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Plays a video from the photo viewer: in the built-in player with the other videos of
      * [around] queued up, or in another app when the setting is off.
      */
-    fun openMedia(item: MediaItem, around: List<MediaItem> = listOf(item)) {
+    fun openMedia(item: MediaItem, around: List<MediaItem> = listOf(item), positionMs: Long = 0L) {
         if (!settings.value.playerInApp) {
             eventChannel.trySend(UiEvent.Open(item.path, mime = item.mime.ifBlank { null }))
             return
         }
         val queue = around.filter { it.isVideo }.ifEmpty { listOf(item) }.map { PlayItem(it.path, it.name, it.isVideo) }
+        // Carry on where the viewer's in-place playback got to.
+        if (positionMs > 0 && settings.value.resumePlayback) app.playerStore.remember(item.path, positionMs)
         player.open(queue, item.path)
     }
 

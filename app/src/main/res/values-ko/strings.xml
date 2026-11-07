@@ -231,6 +231,13 @@
     <string name="settings_open_media">사진을 앱에서 열기</string>
     <string name="settings_open_media_desc">파일 목록에서 사진을 누르면 앱 안에서 열고, 옆으로 넘겨 같은 폴더의 사진을 봅니다</string>
     <string name="settings_player">플레이어</string>
+    <string name="viewer_open_player">플레이어</string>
+    <string name="settings_videos_in_viewer">사진·동영상 함께 넘겨 보기</string>
+    <string name="settings_videos_in_viewer_desc">파일 목록에서 동영상을 누르면 사진 뷰어에서 바로 재생하고, 넘기면 다음 사진이나 동영상을 봅니다</string>
+    <string name="settings_vlc">VLC 엔진</string>
+    <string name="settings_vlc_desc">AVI·MPG·WMV·FLV 등 Android 기본 플레이어가 못 여는 파일을 재생합니다</string>
+    <string name="settings_vlc_off_crash">VLC로 재생하던 중 앱이 종료되어 꺼 두었습니다. 자세한 정보: 진단 정보</string>
+    <string name="msg_vlc_turned_off">VLC로 재생하던 중 앱이 종료되어 VLC 엔진을 껐습니다. 설정 › VLC 엔진에서 다시 켤 수 있습니다</string>
     <string name="settings_player_in_app">동영상·음악을 앱에서 재생</string>
     <string name="settings_player_in_app_desc">파일 목록이나 갤러리에서 동영상·음악을 누르면 내장 플레이어로 재생합니다</string>
     <string name="settings_resume">이어서 재생</string>

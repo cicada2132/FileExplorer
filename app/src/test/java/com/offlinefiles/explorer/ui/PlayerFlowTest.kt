@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureScreenRoboImage
@@ -19,6 +20,10 @@ import com.offlinefiles.explorer.core.player.RepeatMode
 import com.offlinefiles.explorer.data.MediaLibrary
 import com.offlinefiles.explorer.ui.player.SubtitleSource
 import org.junit.Assert.assertEquals
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.onRoot
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -124,9 +129,13 @@ class PlayerFlowTest {
     /** The player is drawn above the screen that opened it, so its buttons come last. */
     private fun clickLast(description: String) = compose.onAllNodesWithContentDescription(description).onLast().performClick()
 
+    /** These tests drive the full player straight from the file list (the viewer has its own test). */
+    private fun fullPlayer(vm: MainViewModel) = vm.updateSettings { it.copy(videosInViewer = false) }
+
     @Test
     fun videoFromTheFileList() {
         val vm = MainViewModel(app)
+        fullPlayer(vm)
         start(vm)
         waitFor { vm.volumes.value.isNotEmpty() }
         openFolder(vm, trip)
@@ -250,6 +259,7 @@ class PlayerFlowTest {
     @Test
     fun galleryAndSettings() {
         val vm = MainViewModel(app).also { it.gallery.source = { ctx -> MediaLibrary.scanFolders(ctx) } }
+        fullPlayer(vm)
         start(vm)
         waitFor { vm.volumes.value.isNotEmpty() }
         val clips = listOf("01_제주 도착.mp4", "02_성산일출봉.mp4").map { name ->
@@ -284,6 +294,7 @@ class PlayerFlowTest {
     @Config(qualifiers = "en-rUS-w891dp-h411dp-land-xhdpi")
     fun englishPlayer() {
         val vm = MainViewModel(app)
+        fullPlayer(vm)
         start(vm)
         waitFor { vm.volumes.value.isNotEmpty() }
         openFolder(vm, trip)
@@ -299,6 +310,42 @@ class PlayerFlowTest {
         settle()
         screen("66_en_player_menu")
         back()
+        compose.runOnIdle { vm.player.close() }
+    }
+
+    @Test
+    fun photosAndVideosTogether() {
+        // A photo between the videos: the viewer swipes through both, videos playing in place.
+        val bmp = android.graphics.Bitmap.createBitmap(480, 360, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(bmp).drawColor(android.graphics.Color.rgb(90, 160, 220))
+        java.io.FileOutputStream(File(trip, "01_해변.jpg")).use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+        val vm = MainViewModel(app)
+        start(vm)
+        waitFor { vm.volumes.value.isNotEmpty() }
+        openFolder(vm, trip)
+        val arrival = vm.visibleItems.value.first { it.name == "01_제주 도착.mp4" }
+        compose.runOnIdle { vm.onItemClick(arrival) }
+        waitFor { vm.gallery.viewer.value != null }
+        val items = vm.gallery.viewer.value!!.items!!.map { it.name }
+        assertEquals(listOf("01_제주 도착.mp4", "01_해변.jpg"), items.take(2))
+        assertTrue("01_해변.jpg" in items && "04_옛날 영상.avi" in items)
+        // No full player: the video plays inside the viewer.
+        assertNull(vm.player.ui.value)
+        settle(800)
+        screen("67_viewer_video")
+
+        // Swipe to the next item: the photo.
+        compose.onRoot().performTouchInput { swipeLeft() }
+        settle(800)
+        screen("68_viewer_photo")
+        assertNull(vm.player.ui.value)
+
+        // Back to the video, then "Player" opens the full player on it.
+        compose.onRoot().performTouchInput { swipeRight() }
+        settle(800)
+        compose.onAllNodesWithText("플레이어").onLast().performClick()
+        waitFor { vm.player.ui.value?.prepared == true }
+        assertEquals("01_제주 도착.mp4", vm.player.ui.value!!.current!!.name)
         compose.runOnIdle { vm.player.close() }
     }
 }

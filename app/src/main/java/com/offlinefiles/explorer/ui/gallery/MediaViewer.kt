@@ -52,6 +52,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.CircularProgressIndicator
@@ -155,6 +157,10 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
     val start = remember { items.indexOfFirst { it.path == request.startPath }.coerceAtLeast(0) }
     val pager = rememberPagerState(initialPage = start) { items.size }
     val current = items.getOrNull(pager.currentPage)
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    // The video playing in place on the current page, if any (for "open in the player" at its position).
+    var inline by remember { mutableStateOf<InlinePlayer?>(null) }
+    val inlinePlayback = settings.playerInApp
 
     // The last item was deleted (or moved away): nothing left to show.
     val empty = items.isEmpty()
@@ -178,7 +184,19 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
         ) { page ->
             val item = items.getOrNull(page)
             if (item != null) {
-                if (item.isVideo) {
+                if (item.isVideo && inlinePlayback) {
+                    val frame = rememberVideoFrame(item)
+                    InlineVideoPage(
+                        item = item,
+                        // Only the page that has settled on screen plays; neighbours show a still.
+                        active = page == pager.settledPage && !pager.isScrollInProgress,
+                        frame = frame,
+                        controls = chrome,
+                        onTap = { chrome = !chrome },
+                        onPlayingChange = { },
+                        playerRef = { p -> if (page == pager.settledPage || p == null) inline = p },
+                    )
+                } else if (item.isVideo) {
                     VideoPage(item, onTap = { chrome = !chrome }, onPlay = { vm.openMedia(item, items) })
                 } else {
                     ImagePage(
@@ -193,7 +211,12 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
         }
         if (current != null) {
             ViewerTopBar(vm, current, chrome) { g.closeViewer(current.path) }
-            ViewerBottomBar(vm, current, chrome, onPlay = { vm.openMedia(current, items) })
+            ViewerBottomBar(vm, current, chrome, inlinePlayback, onPlay = {
+                val p = inline
+                val at = p?.position ?: 0L
+                p?.pause()
+                vm.openMedia(current, items, positionMs = at)
+            })
         }
         SnackbarHost(
             snackbar,
@@ -240,14 +263,21 @@ private fun ImagePage(
     }
 }
 
+/** The grid's thumbnail at once, then a sharper still frame once decoded. */
 @Composable
-private fun VideoPage(item: MediaItem, onTap: () -> Unit, onPlay: () -> Unit) {
+private fun rememberVideoFrame(item: MediaItem): ImageBitmap? {
     val maxSide = rememberDecodeSize()
     val placeholder = remember(item.path, item.dateModified) { Thumbnails.peekMediaAny(item)?.asImageBitmap() }
     val frame by produceState(placeholder, item.path, item.dateModified) {
         val big = withContext(Dispatchers.IO) { MediaDecode.videoFrame(item, maxSide / 2) }
         if (big != null) value = big.asImageBitmap()
     }
+    return frame
+}
+
+@Composable
+private fun VideoPage(item: MediaItem, onTap: () -> Unit, onPlay: () -> Unit) {
+    val frame = rememberVideoFrame(item)
     Box(
         Modifier
             .fillMaxSize()
@@ -564,7 +594,7 @@ private fun BoxScope.ViewerTopBar(vm: MainViewModel, item: MediaItem, visible: B
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible: Boolean, onPlay: () -> Unit) {
+private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible: Boolean, inline: Boolean, onPlay: () -> Unit) {
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier.align(Alignment.BottomCenter),
@@ -582,7 +612,9 @@ private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible
         ) {
             ViewerAction(Icons.Filled.Share, stringResource(R.string.action_share)) { vm.share(listOf(item.path)) }
             if (item.isVideo) {
-                ViewerAction(Icons.Filled.PlayArrow, stringResource(R.string.action_play), onPlay)
+                // With in-place playback this opens the full player (subtitles, speed, gestures) where it got to.
+                if (inline) ViewerAction(Icons.Filled.Fullscreen, stringResource(R.string.viewer_open_player), onPlay)
+                else ViewerAction(Icons.Filled.PlayArrow, stringResource(R.string.action_play), onPlay)
             }
             ViewerAction(Icons.Filled.Info, stringResource(R.string.action_details)) { vm.showDialog(DialogState.MediaInfo(item)) }
             ViewerAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) {

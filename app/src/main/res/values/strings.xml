@@ -231,6 +231,13 @@
     <string name="settings_open_media">Open photos in this app</string>
     <string name="settings_open_media_desc">Tap a photo in the file list to view it here and swipe through the folder</string>
     <string name="settings_player">Player</string>
+    <string name="viewer_open_player">Player</string>
+    <string name="settings_videos_in_viewer">Photos and videos together</string>
+    <string name="settings_videos_in_viewer_desc">Videos in the file list play in the photo viewer; swipe to the next photo or video</string>
+    <string name="settings_vlc">VLC engine</string>
+    <string name="settings_vlc_desc">Plays AVI, MPG, WMV, FLV and files Android’s player can’t</string>
+    <string name="settings_vlc_off_crash">Switched off because the app closed while VLC was playing. Details: Diagnostics</string>
+    <string name="msg_vlc_turned_off">The app closed while VLC was playing, so the VLC engine is off. Settings › VLC engine turns it back on</string>
     <string name="settings_player_in_app">Play videos and music in this app</string>
     <string name="settings_player_in_app_desc">Tap a video or song in the file list or gallery to play it in the built-in player</string>
     <string name="settings_resume">Resume playback</string>

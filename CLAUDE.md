@@ -8,7 +8,7 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 63 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 64 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
@@ -34,9 +34,12 @@ User-facing docs (Korean) are in `README.md`.
   and as automatic fallback when the system player fails or finds no video. libVLC can't load under Robolectric:
   `VlcEngine.available` is false there, so tests exercise the system path. Never let `LibVLC` load its natives itself
   (it calls `System.exit` on failure) — `VlcEngine` loads them first in a try/catch.
-- `data/CrashLog.kt` records the last uncaught exception; `data/UsbDiagnostics.kt` builds Settings › Diagnostics (crash + USB).
+- `data/CrashLog.kt` records the last uncaught exception; `data/UsbDiagnostics.kt` builds Settings › Diagnostics (crash,
+  Android exit reasons, USB). `data/VlcSafety.kt` marks VLC playback and switches VLC off after a crash during it.
+- `ui/gallery/InlineVideo.kt`: videos play in place in the photo viewer (same engines); file-list videos open there
+  when `Settings.videosInViewer` (default on). Tests that drive the full player from the list turn it off.
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 9, `PlayerFlowTest` 4
+  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 9, `PlayerFlowTest` 5
 
 ## USB drives
 
@@ -52,7 +55,7 @@ User-facing docs (Korean) are in `README.md`.
 ## Screenshots
 
 `AppFlowTest` / `GalleryFlowTest` / `UsbFlowTest` / `PlayerFlowTest` rewrite `app/screenshots/*.png` on every test run
-(00–30 file manager, 40–48 gallery, 50–55 USB, 60–66 player). After UI changes, open the changed ones and check layout and Korean/English text, then
+(00–30 file manager, 40–48 gallery, 50–55 USB, 60–68 player/viewer). After UI changes, open the changed ones and check layout and Korean/English text, then
 commit them with the change. Unrelated diffs are usually only the clock/date shown on screen.
 Video thumbnails show a placeholder under Robolectric (no video decoding); check those on a device.
 The player screenshots have a black video area for the same reason (Robolectric's `ShadowMediaPlayer` prepares and

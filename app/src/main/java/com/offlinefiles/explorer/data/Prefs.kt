@@ -26,6 +26,8 @@ data class Settings(
     val playerInApp: Boolean = true,
     /** The player starts each video where it was left off. */
     val resumePlayback: Boolean = true,
+    /** Videos in the file list open in the photo viewer (playing in place) with the folder's photos. */
+    val videosInViewer: Boolean = true,
 )
 
 /** Small, synchronous settings store. SharedPreferences is plenty for a handful of flags. */
@@ -51,6 +53,7 @@ class Prefs(context: Context) {
             .putInt("gallery_zoom", next.galleryZoom)
             .putBoolean("player_in_app", next.playerInApp)
             .putBoolean("resume_playback", next.resumePlayback)
+            .putBoolean("videos_in_viewer", next.videosInViewer)
             .apply()
     }
 
@@ -71,6 +74,7 @@ class Prefs(context: Context) {
             galleryZoom = sp.getInt("gallery_zoom", d.galleryZoom).coerceIn(0, 2),
             playerInApp = sp.getBoolean("player_in_app", d.playerInApp),
             resumePlayback = sp.getBoolean("resume_playback", d.resumePlayback),
+            videosInViewer = sp.getBoolean("videos_in_viewer", d.videosInViewer),
         )
     }
 

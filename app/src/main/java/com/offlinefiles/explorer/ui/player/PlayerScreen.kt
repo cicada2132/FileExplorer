@@ -523,8 +523,9 @@ private fun VideoLayer(p: PlayerModel, s: PlayerUi, zoom: Float, pan: Offset) {
                 modifier = transformed,
             )
         }
-        // VLC draws subtitle tracks inside the file on a transparent layer of the same size.
-        if (s.engine == "vlc") {
+        // VLC draws subtitle tracks inside the file on a transparent layer of the same size. It is there
+        // for every video, so VLC finds it ready when it starts instead of re-attaching mid-play.
+        if (s.isVideo) {
             AndroidView(
                 factory = { ctx ->
                     TextureView(ctx).apply {

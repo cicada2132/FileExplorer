@@ -39,6 +39,10 @@ object UsbDiagnostics {
         appendLine("[Last crash]")
         appendLine(CrashLog.last(context) ?: "(none)")
         appendLine()
+        appendLine("[How the app last ended (Android)]")
+        VlcSafety.exitReasons(context).ifEmpty { listOf("(none)") }.forEach { appendLine("- $it") }
+        appendLine("VLC engine: " + if (VlcSafety.disabled(context)) "off (${VlcSafety.detail(context) ?: "by the user"})" else "on")
+        appendLine()
         appendLine("[System volumes]")
         val sm = context.getSystemService(StorageManager::class.java)
         runCatching {

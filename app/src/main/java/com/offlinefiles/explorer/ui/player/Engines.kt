@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.view.Surface
 import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.data.VlcSafety
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.interfaces.IVLCVout
@@ -196,6 +197,7 @@ class VlcEngine private constructor(
             Media(vlc, item.path)
         }
         media.setHWDecoderEnabled(hardware, false)
+        VlcSafety.started(context)
         mp.setMedia(media)
         media.release()
         mp.setEventListener(VlcPlayer.EventListener { e -> if (!released) onEvent(e) })
@@ -238,7 +240,9 @@ class VlcEngine private constructor(
     override fun setSubtitleSurface(surface: Surface?) {
         if (surface === subtitleSurface) return
         subtitleSurface = surface
-        if (this.surface != null) attach()
+        // Re-attaching while VLC sets up or draws its video can crash it: a new subtitle surface
+        // is taken at the next attach (the screen gives it before VLC starts, so this is rare).
+        if (this.surface != null && !mp.vlcVout.areViewsAttached()) attach()
     }
 
     /** VLC takes its surfaces only while detached. */
@@ -319,9 +323,11 @@ class VlcEngine private constructor(
         released = true
         main.removeCallbacksAndMessages(null)
         runCatching { mp.setEventListener(null) }
-        runCatching { if (mp.vlcVout.areViewsAttached()) mp.vlcVout.detachViews() }
+        // Stop first, then take the surfaces away: VLC's video thread must not draw on a surface that's gone.
         runCatching { mp.stop() }
+        runCatching { if (mp.vlcVout.areViewsAttached()) mp.vlcVout.detachViews() }
         runCatching { mp.release() }
+        VlcSafety.stopped(context)
         runCatching { fd?.close() }
         fd = null
     }
@@ -333,8 +339,11 @@ class VlcEngine private constructor(
         @Volatile
         private var broken = false
 
-        /** False where the native library can't load (an unsupported CPU, or unit tests on a PC). */
-        fun available(context: Context): Boolean = libVlc(context) != null
+        /**
+         * False where the native library can't load (an unsupported CPU, or unit tests on a PC),
+         * or after VLC crashed the app (until switched back on in Settings).
+         */
+        fun available(context: Context): Boolean = !VlcSafety.disabled(context) && libVlc(context) != null
 
         private fun libVlc(context: Context): LibVLC? {
             if (broken) return null
@@ -355,6 +364,7 @@ class VlcEngine private constructor(
         }
 
         fun create(context: Context, listener: EngineListener, hardware: Boolean): VlcEngine? {
+            if (VlcSafety.disabled(context)) return null
             val lib = libVlc(context) ?: return null
             return try {
                 VlcEngine(context, listener, lib, hardware)
