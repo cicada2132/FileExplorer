@@ -134,14 +134,3 @@ object PlayerTime {
         return (fraction * perWidth).toLong()
     }
 }
-
-/** Which engine gets a file first. */
-object EngineChoice {
-    /** Containers and codecs Android's own player opens on almost no phone: VLC plays these straight away. */
-    private val VLC_FIRST = setOf(
-        "avi", "divx", "xvid", "wmv", "asf", "flv", "f4v", "rm", "rmvb", "vob", "ogm", "dv", "mpg", "mpeg", "m2v",
-        "wma", "ape", "ac3", "dts",
-    )
-
-    fun prefersVlc(name: String): Boolean = name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT) in VLC_FIRST
-}

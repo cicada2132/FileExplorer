@@ -4,6 +4,8 @@ import android.os.SystemClock
 import android.view.Surface
 import android.view.TextureView
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -448,9 +450,19 @@ private fun PlayerScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
 
         ResumeBanner(p, s, raised = chrome && !locked)
 
+        // Subtitle files from anywhere (other folders, other drives) through the system file picker.
+        val pickSubtitle = rememberLauncherForActivityResult(PickSubtitleFile()) { uri -> if (uri != null) p.addSubtitleFile(uri) }
         val open = panel
         if (open != null) {
-            PlayerPanels(vm, s, open, onPanel = { panel = it }, onNote = note)
+            PlayerPanels(
+                vm, s, open,
+                onPanel = { panel = it },
+                onNote = note,
+                onPickSubtitle = {
+                    panel = null
+                    runCatching { pickSubtitle.launch(p.subtitlePickerStart()) }
+                },
+            )
         }
 
         SnackbarHost(
@@ -1202,3 +1214,15 @@ fun rotationLabelText(context: android.content.Context, mode: RotationMode): Str
         RotationMode.PORTRAIT -> R.string.rotation_portrait
     },
 )
+
+/** The system file picker for any file (subtitle types have no reliable MIME type), opened at [Uri] if given. */
+private class PickSubtitleFile : ActivityResultContract<android.net.Uri?, android.net.Uri?>() {
+    override fun createIntent(context: android.content.Context, input: android.net.Uri?): android.content.Intent =
+        android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+            .apply { if (input != null) putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, input) }
+
+    override fun parseResult(resultCode: Int, intent: android.content.Intent?): android.net.Uri? =
+        if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
+}

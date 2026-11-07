@@ -8,7 +8,7 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 64 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 65 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
@@ -29,17 +29,20 @@ User-facing docs (Korean) are in `README.md`.
   player logic and subtitle parsing (`core/player`)
 - `data/` Android access: storage volumes, MediaStore (`MediaLibrary.kt`), prefs, player memory (`PlayerStore.kt`), intents (`Platform.kt`)
 - `ops/` background operations; `ui/` Compose screens (`browser`, `gallery`, `home`, `archive`, `settings`, `dialogs`, `player`)
-- `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` drives an `Engine` (`ui/player/Engines.kt`):
-  `SystemEngine` (framework `MediaPlayer`) first, `VlcEngine` (libVLC) for AVI/WMV/FLV... (`core/player` `EngineChoice`)
-  and as automatic fallback when the system player fails or finds no video. libVLC can't load under Robolectric:
-  `VlcEngine.available` is false there, so tests exercise the system path. Never let `LibVLC` load its natives itself
-  (it calls `System.exit` on failure) — `VlcEngine` loads them first in a try/catch.
+- `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` drives an `Engine` (`ui/player/Engines.kt`).
+  The app plays everything with `VlcEngine` (libVLC); Android's `MediaPlayer` is not used for playback and VLC can't be
+  switched off (owner's decision). `Engines.factory` makes the engine: VLC in the app; `PlayerFlowTest` swaps in
+  `MediaPlayerEngine` (test sources, Robolectric's `ShadowMediaPlayer`) because libVLC can't load on a PC.
+  Never let `LibVLC` load its natives itself (it calls `System.exit` on failure) — `VlcEngine` loads them first.
+- Subtitles: files next to the video (USB document trees copied to the cache), a file picked by hand
+  (`PlayerModel.addSubtitleFile`, system picker), and the choice per video in `PlayerStore.subtitleChoice`;
+  then a Korean embedded track (`autoSelectEmbedded`). Matching rules are in `core/player/Subtitles.kt`.
 - `data/CrashLog.kt` records the last uncaught exception; `data/UsbDiagnostics.kt` builds Settings › Diagnostics (crash,
-  Android exit reasons, USB). `data/VlcSafety.kt` marks VLC playback and switches VLC off after a crash during it.
+  Android exit reasons including native crashes, USB).
 - `ui/gallery/InlineVideo.kt`: videos play in place in the photo viewer (same engines); file-list videos open there
   when `Settings.videosInViewer` (default on). Tests that drive the full player from the list turn it off.
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 9, `PlayerFlowTest` 5
+  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 9, `PlayerFlowTest` 6
 
 ## USB drives
 
@@ -55,7 +58,7 @@ User-facing docs (Korean) are in `README.md`.
 ## Screenshots
 
 `AppFlowTest` / `GalleryFlowTest` / `UsbFlowTest` / `PlayerFlowTest` rewrite `app/screenshots/*.png` on every test run
-(00–30 file manager, 40–48 gallery, 50–55 USB, 60–68 player/viewer). After UI changes, open the changed ones and check layout and Korean/English text, then
+(00–30 file manager, 40–48 gallery, 50–55 USB, 60–69 player/viewer). After UI changes, open the changed ones and check layout and Korean/English text, then
 commit them with the change. Unrelated diffs are usually only the clock/date shown on screen.
 Video thumbnails show a placeholder under Robolectric (no video decoding); check those on a device.
 The player screenshots have a black video area for the same reason (Robolectric's `ShadowMediaPlayer` prepares and

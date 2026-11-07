@@ -62,21 +62,18 @@ import com.offlinefiles.explorer.R
 import com.offlinefiles.explorer.core.gallery.MediaDates
 import com.offlinefiles.explorer.core.gallery.MediaItem
 import com.offlinefiles.explorer.core.player.AspectMode
-import com.offlinefiles.explorer.core.player.EngineChoice
 import com.offlinefiles.explorer.core.player.VideoLayout
 import com.offlinefiles.explorer.data.UsbDiagnostics
 import com.offlinefiles.explorer.ui.player.Engine
 import com.offlinefiles.explorer.ui.player.EngineListener
 import com.offlinefiles.explorer.ui.player.PlayItem
-import com.offlinefiles.explorer.ui.player.SystemEngine
-import com.offlinefiles.explorer.ui.player.VlcEngine
+import com.offlinefiles.explorer.ui.player.Engines
 import kotlinx.coroutines.delay
 
 /**
  * A video playing in place in the photo viewer, so photos and videos can be swiped through
  * together. Deliberately simple (play/pause, seek, replay); the full player is one tap away.
- * Uses the same engines as the full player: Android's own first, VLC for AVI/MPG/... or when
- * Android's can't play the file.
+ * Plays with VLC, like the full player.
  */
 class InlinePlayer(private val context: Context) {
     var prepared by mutableStateOf(false)
@@ -103,7 +100,6 @@ class InlinePlayer(private val context: Context) {
     private var surface: Surface? = null
     private var surfaceW = 0
     private var surfaceH = 0
-    private var triedVlc = false
     private val audio = context.getSystemService(AudioManager::class.java)
     private var focus: AudioFocusRequest? = null
 
@@ -115,11 +111,10 @@ class InlinePlayer(private val context: Context) {
     fun start(item: MediaItem) {
         if (this.item?.path == item.path && engine != null) return
         this.item = item
-        triedVlc = false
-        load(EngineChoice.prefersVlc(item.name))
+        load()
     }
 
-    private fun load(vlc: Boolean) {
+    private fun load() {
         val item = item ?: return
         engine?.let { e -> runCatching { e.release() } }
         engine = null
@@ -172,9 +167,14 @@ class InlinePlayer(private val context: Context) {
             override fun onTimedText(text: String?) = Unit
             override fun onTracksChanged() = Unit
         }
-        e = (if (vlc) VlcEngine.create(context, listener, hardware = true) else null) ?: SystemEngine(context, listener)
+        val created = Engines.create(context, listener, hardware = true)
+        if (created == null) {
+            UsbDiagnostics.log(context, "viewer: VLC unavailable for ${item.name}")
+            error = true
+            return
+        }
+        e = created
         engine = e
-        if (vlc) triedVlc = true
         try {
             e.open(PlayItem(item.path, item.name, true), attributes, surface, surfaceW, surfaceH)
         } catch (ex: Exception) {
@@ -184,10 +184,6 @@ class InlinePlayer(private val context: Context) {
 
     private fun fail(e: Engine, detail: String) {
         UsbDiagnostics.log(context, "viewer ${e.name} ${item?.name}: $detail")
-        if (e is SystemEngine && !triedVlc && !firstFrame && VlcEngine.available(context)) {
-            load(vlc = true)
-            return
-        }
         error = true
         playing = false
         abandonFocus()

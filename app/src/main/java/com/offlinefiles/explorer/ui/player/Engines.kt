@@ -2,15 +2,11 @@ package com.offlinefiles.explorer.ui.player
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.MediaFormat
-import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.view.Surface
 import com.offlinefiles.explorer.data.Stores
-import com.offlinefiles.explorer.data.VlcSafety
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.interfaces.IVLCVout
@@ -40,8 +36,9 @@ data class EngineTracks(
 )
 
 /**
- * One way of playing a file: the system's MediaPlayer, or libVLC for formats the system can't
- * decode (AVI, WMV, FLV, DivX/Xvid, AC3/DTS...). The player model drives either the same way.
+ * What plays a file. The app plays everything with libVLC ([VlcEngine]); Android's own
+ * MediaPlayer is not used. The interface exists so unit tests can stand in for VLC, whose
+ * native code can't run on a PC (see [Engines.factory]).
  */
 interface Engine {
     val name: String
@@ -67,82 +64,11 @@ interface Engine {
     /** A transparent surface over the video for subtitles the engine draws itself (VLC). */
     fun setSubtitleSurface(surface: Surface?) = Unit
 
-    /** Positive: sound later. False where the engine can't (Android's player). */
+    /** Positive: sound later. False where the engine can't. */
     fun setAudioDelay(ms: Long): Boolean = false
 
     /** For subtitle tracks inside the file that the engine draws itself. */
     fun setSubtitleDelay(ms: Long): Boolean = false
-}
-
-/** The framework MediaPlayer: hardware decoders, MP4/MKV/WebM/TS with H.264/H.265/VP9/AV1. */
-class SystemEngine(private val context: Context, private val listener: EngineListener) : Engine {
-    override val name = "system"
-    private val mp = MediaPlayer()
-
-    override fun open(item: PlayItem, attributes: AudioAttributes, surface: Surface?, surfaceW: Int, surfaceH: Int) {
-        mp.setAudioAttributes(attributes)
-        mp.setOnPreparedListener { listener.onPrepared() }
-        mp.setOnCompletionListener { listener.onCompletion() }
-        mp.setOnErrorListener { _, what, extra ->
-            listener.onError("system what=$what extra=$extra")
-            true
-        }
-        mp.setOnInfoListener { _, what, _ ->
-            if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) listener.onFirstFrame()
-            false
-        }
-        mp.setOnVideoSizeChangedListener { _, w, h -> if (w > 0 && h > 0) listener.onVideoSize(w, h) }
-        mp.setOnSeekCompleteListener { listener.onSeekComplete() }
-        mp.setOnTimedTextListener { _, text -> listener.onTimedText(text?.text) }
-        // USB drives opened through the system picker have no file paths: play through the provider.
-        val tree = Stores.tree(item.path)
-        if (tree != null) mp.setDataSource(context, tree.documentUri(item.path)) else mp.setDataSource(item.path)
-        if (item.isVideo && surface != null) mp.setSurface(surface)
-        mp.prepareAsync()
-    }
-
-    override fun setSurface(surface: Surface?, width: Int, height: Int) = mp.setSurface(surface)
-    override fun setSurfaceSize(width: Int, height: Int) = Unit
-    override fun start() = mp.start()
-    override fun pause() = mp.pause()
-    override val isPlaying: Boolean get() = mp.isPlaying
-
-    override fun seekTo(ms: Long, exact: Boolean) =
-        mp.seekTo(ms, if (exact) MediaPlayer.SEEK_CLOSEST else MediaPlayer.SEEK_PREVIOUS_SYNC)
-
-    override val position: Long get() = mp.currentPosition.toLong()
-    override val duration: Long get() = mp.duration.toLong()
-    override val videoWidth: Int get() = mp.videoWidth
-    override val videoHeight: Int get() = mp.videoHeight
-
-    /** Only while playing: on a paused MediaPlayer a non-zero speed also starts playback. */
-    override fun setSpeed(speed: Float): Boolean = runCatching { mp.playbackParams = PlaybackParams().setSpeed(speed) }.isSuccess
-    override fun setVolume(volume: Float) = mp.setVolume(volume, volume)
-
-    override fun tracks(): EngineTracks {
-        val infos = runCatching { mp.trackInfo }.getOrNull() ?: return EngineTracks(emptyList(), -1, emptyList(), hasVideo = true)
-        val audio = ArrayList<EngineTrack>()
-        val subs = ArrayList<EngineTrack>()
-        var video = false
-        infos.forEachIndexed { i, t ->
-            val mime = runCatching { t?.format?.getString(MediaFormat.KEY_MIME) }.getOrNull()
-            when (t?.trackType) {
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_VIDEO -> video = true
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO -> audio += EngineTrack(i, t.language, mime, null)
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_TIMEDTEXT -> subs += EngineTrack(i, t.language, mime, null)
-            }
-        }
-        val selected = runCatching { mp.getSelectedTrack(MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) }.getOrDefault(-1)
-        return EngineTracks(audio, selected, subs, hasVideo = video || infos.isEmpty())
-    }
-
-    override fun selectAudio(index: Int) = runCatching { mp.selectTrack(index) }.isSuccess
-    override fun selectSubtitle(index: Int) = runCatching { mp.selectTrack(index) }.isSuccess
-    override fun deselectSubtitle(index: Int) {
-        runCatching { mp.deselectTrack(index) }
-    }
-
-    override fun release() = mp.release()
 }
 
 /**
@@ -197,7 +123,6 @@ class VlcEngine private constructor(
             Media(vlc, item.path)
         }
         media.setHWDecoderEnabled(hardware, false)
-        VlcSafety.started(context)
         mp.setMedia(media)
         media.release()
         mp.setEventListener(VlcPlayer.EventListener { e -> if (!released) onEvent(e) })
@@ -327,7 +252,6 @@ class VlcEngine private constructor(
         runCatching { mp.stop() }
         runCatching { if (mp.vlcVout.areViewsAttached()) mp.vlcVout.detachViews() }
         runCatching { mp.release() }
-        VlcSafety.stopped(context)
         runCatching { fd?.close() }
         fd = null
     }
@@ -339,11 +263,8 @@ class VlcEngine private constructor(
         @Volatile
         private var broken = false
 
-        /**
-         * False where the native library can't load (an unsupported CPU, or unit tests on a PC),
-         * or after VLC crashed the app (until switched back on in Settings).
-         */
-        fun available(context: Context): Boolean = !VlcSafety.disabled(context) && libVlc(context) != null
+        /** False only where the native library can't load (an unsupported CPU, or unit tests on a PC). */
+        fun available(context: Context): Boolean = libVlc(context) != null
 
         private fun libVlc(context: Context): LibVLC? {
             if (broken) return null
@@ -364,7 +285,6 @@ class VlcEngine private constructor(
         }
 
         fun create(context: Context, listener: EngineListener, hardware: Boolean): VlcEngine? {
-            if (VlcSafety.disabled(context)) return null
             val lib = libVlc(context) ?: return null
             return try {
                 VlcEngine(context, listener, lib, hardware)
@@ -381,4 +301,15 @@ class VlcEngine private constructor(
             "--no-stats",
         )
     }
+}
+
+/** Where the player and the photo viewer get their engine from. */
+object Engines {
+    /** Always VLC in the app. Unit tests replace it with a stand-in (VLC's native code can't load on a PC). */
+    @Volatile
+    var factory: (context: Context, listener: EngineListener, hardware: Boolean) -> Engine? =
+        { context, listener, hardware -> VlcEngine.create(context, listener, hardware) }
+
+    /** Null when VLC can't run on this device. */
+    fun create(context: Context, listener: EngineListener, hardware: Boolean): Engine? = factory(context, listener, hardware)
 }

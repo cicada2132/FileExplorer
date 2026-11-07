@@ -234,10 +234,6 @@
     <string name="viewer_open_player">Player</string>
     <string name="settings_videos_in_viewer">Photos and videos together</string>
     <string name="settings_videos_in_viewer_desc">Videos in the file list play in the photo viewer; swipe to the next photo or video</string>
-    <string name="settings_vlc">VLC engine</string>
-    <string name="settings_vlc_desc">Plays AVI, MPG, WMV, FLV and files Android’s player can’t</string>
-    <string name="settings_vlc_off_crash">Switched off because the app closed while VLC was playing. Details: Diagnostics</string>
-    <string name="msg_vlc_turned_off">The app closed while VLC was playing, so the VLC engine is off. Settings › VLC engine turns it back on</string>
     <string name="settings_player_in_app">Play videos and music in this app</string>
     <string name="settings_player_in_app_desc">Tap a video or song in the file list or gallery to play it in the built-in player</string>
     <string name="settings_resume">Resume playback</string>
@@ -279,14 +275,8 @@
     <string name="player_sleep_remaining">Pauses in %s</string>
     <string name="player_sleep_done">Sleep timer: playback paused</string>
     <string name="player_pip">Picture-in-picture</string>
-    <string name="player_engine">Playback engine</string>
-    <string name="player_engine_system">Android (tap to try VLC)</string>
-    <string name="player_engine_vlc">VLC (tap to try Android)</string>
-    <string name="player_vlc_unavailable">VLC can’t run on this device</string>
     <string name="player_audio_sync">Audio sync</string>
     <string name="player_audio_sync_hint">Sound ahead of the picture: +. Sound behind: −. Tap the value to reset.</string>
-    <string name="player_audio_sync_vlc_only">Audio sync works with the VLC engine.</string>
-    <string name="player_use_vlc">Play with VLC</string>
     <string name="player_decoding">Decoding</string>
     <string name="player_decoding_hw">Hardware (tap for software)</string>
     <string name="player_decoding_sw">Software (tap for hardware)</string>
@@ -295,7 +285,8 @@
     <string name="player_info_artist">Artist</string>
     <string name="player_info_album">Album</string>
     <string name="player_subtitle_embedded">Built-in · %s</string>
-    <string name="player_subtitle_none">No subtitles found. Put an .srt, .smi, .vtt or .ass file next to the video (the same name works best).</string>
+    <string name="player_subtitle_open">Open subtitle file…</string>
+    <string name="player_subtitle_none">No subtitles found next to the video. Open a subtitle file above, or put an .srt, .smi, .vtt or .ass file next to the video (the same name works best).</string>
     <string name="player_subtitle_size">Size</string>
     <string name="player_subtitle_sync">Sync</string>
     <string name="player_subtitle_sync_hint">Plus shows lines later, minus shows them earlier. Tap the value to reset.</string>

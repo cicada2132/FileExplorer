@@ -10,7 +10,6 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import com.offlinefiles.explorer.data.UsbDiagnostics
-import com.offlinefiles.explorer.data.VlcSafety
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -132,17 +131,6 @@ fun SettingsScreen(vm: MainViewModel) {
             Section(stringResource(R.string.settings_player))
             SwitchRow(Icons.Filled.PlayCircle, stringResource(R.string.settings_player_in_app), stringResource(R.string.settings_player_in_app_desc), s.playerInApp) { on ->
                 vm.updateSettings { it.copy(playerInApp = on) }
-            }
-            if (s.playerInApp) {
-                // VLC (AVI, WMV, MPG...): switched off automatically if it ever crashes the app.
-                val ctx = LocalContext.current
-                var vlcOn by remember { mutableStateOf(!VlcSafety.disabled(ctx)) }
-                val vlcDesc = if (vlcOn) stringResource(R.string.settings_vlc_desc)
-                else VlcSafety.detail(ctx)?.let { stringResource(R.string.settings_vlc_off_crash) } ?: stringResource(R.string.settings_vlc_desc)
-                SwitchRow(Icons.Filled.Memory, stringResource(R.string.settings_vlc), vlcDesc, vlcOn) { on ->
-                    VlcSafety.setDisabled(ctx, !on)
-                    vlcOn = on
-                }
             }
             if (s.playerInApp && s.openMediaInApp) {
                 SwitchRow(Icons.Filled.ViewCarousel, stringResource(R.string.settings_videos_in_viewer), stringResource(R.string.settings_videos_in_viewer_desc), s.videosInViewer) { on ->

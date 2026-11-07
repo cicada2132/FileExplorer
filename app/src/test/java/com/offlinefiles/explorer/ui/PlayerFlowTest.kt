@@ -28,6 +28,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.offlinefiles.explorer.ui.player.Engines
+import com.offlinefiles.explorer.ui.player.MediaPlayerEngine
+import com.offlinefiles.explorer.ui.player.VlcEngine
+import android.net.Uri
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -57,6 +62,8 @@ class PlayerFlowTest {
 
     @Before
     fun setUp() {
+        // VLC's native code can't run on a PC: Android's MediaPlayer (Robolectric's stand-in) plays instead.
+        Engines.factory = { context, listener, _ -> MediaPlayerEngine(context, listener) }
         app = compose.activity.application as App
         val appOps = app.getSystemService(AppOpsManager::class.java)
         shadowOf(appOps).setMode(
@@ -92,6 +99,11 @@ class PlayerFlowTest {
         length(File(trip, "03_우도.mkv"), 412_000)
         length(File(music, "봄날.mp3"), 215_000)
         length(File(music, "outro.flac"), 182_000)
+    }
+
+    @After
+    fun tearDown() {
+        Engines.factory = { context, listener, hardware -> VlcEngine.create(context, listener, hardware) }
     }
 
     private fun start(vm: MainViewModel) {
@@ -346,6 +358,51 @@ class PlayerFlowTest {
         compose.onAllNodesWithText("플레이어").onLast().performClick()
         waitFor { vm.player.ui.value?.prepared == true }
         assertEquals("01_제주 도착.mp4", vm.player.ui.value!!.current!!.name)
+        compose.runOnIdle { vm.player.close() }
+    }
+
+    @Test
+    fun subtitlesPickedByHandAreRemembered() {
+        val vm = MainViewModel(app)
+        fullPlayer(vm)
+        start(vm)
+        waitFor { vm.volumes.value.isNotEmpty() }
+        openFolder(vm, trip)
+
+        // No subtitle next to this video; one picked by hand from another folder.
+        val island = vm.visibleItems.value.first { it.name == "03_우도.mkv" }
+        compose.runOnIdle { vm.onItemClick(island) }
+        waitFor { vm.player.ui.value?.prepared == true }
+        assertNull(vm.player.ui.value!!.subtitle)
+        val picked = File(root, "Download/자막 모음/우도 한글.srt").apply {
+            parentFile?.mkdirs()
+            writeText("1\n00:00:00,000 --> 00:00:30,000\n우도에 도착!\n")
+        }
+        compose.runOnIdle { vm.player.addSubtitleFile(Uri.fromFile(picked)) }
+        waitFor { (vm.player.ui.value?.subtitle as? SubtitleSource.External)?.path == picked.path }
+        compose.runOnIdle { vm.player.seekTo(1_000) }
+        waitFor { vm.player.subtitleText.value == "우도에 도착!" }
+        clickLast("자막")
+        settle()
+        screen("69_player_subtitle_picked")
+        back()
+        compose.runOnIdle { vm.player.close() }
+
+        // Opening the video again turns the picked file on by itself.
+        compose.runOnIdle { vm.onItemClick(island) }
+        waitFor { (vm.player.ui.value?.subtitle as? SubtitleSource.External)?.path == picked.path }
+        compose.runOnIdle { vm.player.close() }
+
+        // Turned off for a video that has its own subtitle: it stays off next time.
+        val peak = vm.visibleItems.value.first { it.name == "02_성산일출봉.mp4" }
+        compose.runOnIdle { vm.onItemClick(peak) }
+        waitFor { vm.player.ui.value?.subtitle != null }
+        compose.runOnIdle { vm.player.selectSubtitle(null) }
+        compose.runOnIdle { vm.player.close() }
+        compose.runOnIdle { vm.onItemClick(peak) }
+        waitFor { vm.player.ui.value?.prepared == true }
+        settle(600)
+        assertNull(vm.player.ui.value!!.subtitle)
         compose.runOnIdle { vm.player.close() }
     }
 }

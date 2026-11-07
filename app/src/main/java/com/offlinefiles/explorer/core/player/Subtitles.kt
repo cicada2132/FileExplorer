@@ -268,22 +268,47 @@ object Subtitles {
         return matching.sortedWith(compareBy<File> { it.name.length }.then(byName)) + others.sortedWith(byName)
     }
 
-    /** "movie.srt", "movie.ko.srt", "movie_eng.smi" belong to "movie.mp4". */
-    fun matches(video: File, subtitle: File): Boolean {
-        val base = video.name.substringBeforeLast('.').lowercase(Locale.ROOT)
-        val n = subtitle.name.substringBeforeLast('.').lowercase(Locale.ROOT)
-        return n == base || n.startsWith("$base.") || n.startsWith("${base}_") || n.startsWith("$base ")
+    /** "movie.srt", "movie.ko.srt", "movie_eng.smi", "movie-kor.srt", "movie [한글].smi" belong to "movie.mp4". */
+    fun matches(video: File, subtitle: File): Boolean = matches(video.name, subtitle.name)
+
+    fun matches(videoName: String, subtitleName: String): Boolean {
+        val base = videoName.substringBeforeLast('.').lowercase(Locale.ROOT).trim()
+        val n = subtitleName.substringBeforeLast('.').lowercase(Locale.ROOT).trim()
+        if (base.isEmpty()) return false
+        return n == base || SEPARATORS.any { n.startsWith(base + it) }
     }
 
-    /** Which of the matching subtitle files to show at start: one in the user's language if there is one. */
-    fun preferred(video: File, candidates: List<File>, language: String): File? {
-        val matching = candidates.filter { matches(video, it) }
-        if (matching.isEmpty()) return null
-        val tags = when (language) {
-            "ko" -> listOf(".ko", ".kor", ".korean", "_ko", "_kor", " ko", "한글", "한국어")
-            "en" -> listOf(".en", ".eng", ".english", "_en", "_eng", " en")
-            else -> listOf(".$language", "_$language")
-        }
-        return matching.firstOrNull { f -> val n = f.name.lowercase(Locale.ROOT); tags.any { n.contains(it) } } ?: matching.first()
+    private val SEPARATORS = listOf(".", "_", " ", "-", "[", "(")
+
+    /** Words in file names and track labels that mark a language. */
+    private fun languageTags(language: String): List<String> = when (language) {
+        "ko" -> listOf("ko", "kor", "korean", "kr", "한글", "한국어", "한국")
+        "en" -> listOf("en", "eng", "english", "영어")
+        "ja" -> listOf("ja", "jp", "jpn", "japanese", "日本語")
+        "zh" -> listOf("zh", "chi", "zho", "chs", "cht", "chinese", "中文")
+        else -> listOf(language)
     }
+
+    /** True when [text] carries a word for [language] (as a whole word: "kor" in "movie.kor", not in "korea"). */
+    fun mentionsLanguage(text: String, language: String): Boolean {
+        val words = text.lowercase(Locale.ROOT).split(Regex("""[^\p{L}\p{N}]+""")).filter { it.isNotEmpty() }
+        val tags = languageTags(language)
+        return words.any { it in tags } || tags.any { t -> t.any { c -> c.code > 0x2000 } && text.contains(t) }
+    }
+
+    /**
+     * Which subtitle file to show at start. Files named after the video come first, one in the
+     * user's language preferred. With no such file, a folder that holds only this one video uses
+     * any subtitle file there (people often keep "movie.mkv" with "Movie.Korean.srt").
+     */
+    fun preferred(video: File, candidates: List<File>, language: String, onlyVideoInFolder: Boolean = false): File? {
+        val matching = candidates.filter { matches(video, it) }
+        val pool = matching.ifEmpty { if (onlyVideoInFolder) candidates else emptyList() }
+        if (pool.isEmpty()) return null
+        return pool.firstOrNull { mentionsLanguage(it.name.substringBeforeLast('.'), language) } ?: pool.first()
+    }
+
+    /** Which track of a subtitle file (SAMI files hold one per language) to show: the user's language if there. */
+    fun preferredTrack(tracks: List<SubtitleTrack>, language: String): Int =
+        tracks.indexOfFirst { mentionsLanguage(it.label, language) }.coerceAtLeast(0)
 }

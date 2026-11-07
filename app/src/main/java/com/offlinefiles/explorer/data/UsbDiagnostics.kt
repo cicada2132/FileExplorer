@@ -1,9 +1,12 @@
 package com.offlinefiles.explorer.data
 
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.storage.StorageManager
+import androidx.annotation.RequiresApi
 import com.offlinefiles.explorer.BuildConfig
 import java.io.File
 import java.text.SimpleDateFormat
@@ -40,8 +43,7 @@ object UsbDiagnostics {
         appendLine(CrashLog.last(context) ?: "(none)")
         appendLine()
         appendLine("[How the app last ended (Android)]")
-        VlcSafety.exitReasons(context).ifEmpty { listOf("(none)") }.forEach { appendLine("- $it") }
-        appendLine("VLC engine: " + if (VlcSafety.disabled(context)) "off (${VlcSafety.detail(context) ?: "by the user"})" else "on")
+        exitReasons(context).ifEmpty { listOf("(none)") }.forEach { appendLine("- $it") }
         appendLine()
         appendLine("[System volumes]")
         val sm = context.getSystemService(StorageManager::class.java)
@@ -80,5 +82,31 @@ object UsbDiagnostics {
         if (intent == null) return "null"
         val extras = runCatching { intent.extras?.keySet()?.joinToString { k -> "$k=${@Suppress("DEPRECATION") intent.extras?.get(k)}" } }.getOrNull()
         return "action=${intent.action} data=${intent.data} flags=0x${Integer.toHexString(intent.flags)} extras={${extras.orEmpty()}}"
+    }
+
+    /** The most recent ways this app's process ended (Android 11+), newest first. Shows native crashes too. */
+    private fun exitReasons(context: Context, max: Int = 5): List<String> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return emptyList()
+        val am = context.getSystemService(ActivityManager::class.java) ?: return emptyList()
+        return runCatching { am.getHistoricalProcessExitReasons(context.packageName, 0, max) }
+            .getOrDefault(emptyList())
+            .map { describe(it) }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun describe(e: ApplicationExitInfo): String {
+        val reason = when (e.reason) {
+            ApplicationExitInfo.REASON_CRASH -> "crash (Java)"
+            ApplicationExitInfo.REASON_CRASH_NATIVE -> "crash (native)"
+            ApplicationExitInfo.REASON_EXIT_SELF -> "exit by itself"
+            ApplicationExitInfo.REASON_ANR -> "not responding"
+            ApplicationExitInfo.REASON_LOW_MEMORY -> "low memory"
+            ApplicationExitInfo.REASON_SIGNALED -> "killed by signal"
+            ApplicationExitInfo.REASON_USER_REQUESTED -> "closed by the user"
+            ApplicationExitInfo.REASON_USER_STOPPED -> "stopped by the user"
+            else -> "reason ${e.reason}"
+        }
+        val time = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date(e.timestamp))
+        return "$time $reason status=${e.status} ${e.description.orEmpty()}".trim()
     }
 }
