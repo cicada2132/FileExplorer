@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureScreenRoboImage
@@ -19,10 +20,19 @@ import com.offlinefiles.explorer.core.player.RepeatMode
 import com.offlinefiles.explorer.data.MediaLibrary
 import com.offlinefiles.explorer.ui.player.SubtitleSource
 import org.junit.Assert.assertEquals
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.onRoot
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.offlinefiles.explorer.ui.player.Engines
+import com.offlinefiles.explorer.ui.player.MediaPlayerEngine
+import com.offlinefiles.explorer.ui.player.VlcEngine
+import android.net.Uri
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -52,6 +62,8 @@ class PlayerFlowTest {
 
     @Before
     fun setUp() {
+        // VLC's native code can't run on a PC: Android's MediaPlayer (Robolectric's stand-in) plays instead.
+        Engines.factory = { context, listener, _ -> MediaPlayerEngine(context, listener) }
         app = compose.activity.application as App
         val appOps = app.getSystemService(AppOpsManager::class.java)
         shadowOf(appOps).setMode(
@@ -89,6 +101,11 @@ class PlayerFlowTest {
         length(File(music, "outro.flac"), 182_000)
     }
 
+    @After
+    fun tearDown() {
+        Engines.factory = { context, listener, hardware -> VlcEngine.create(context, listener, hardware) }
+    }
+
     private fun start(vm: MainViewModel) {
         compose.setContent { AppRoot(vm) }
         compose.waitForIdle()
@@ -124,9 +141,13 @@ class PlayerFlowTest {
     /** The player is drawn above the screen that opened it, so its buttons come last. */
     private fun clickLast(description: String) = compose.onAllNodesWithContentDescription(description).onLast().performClick()
 
+    /** These tests drive the full player straight from the file list (the viewer has its own test). */
+    private fun fullPlayer(vm: MainViewModel) = vm.updateSettings { it.copy(videosInViewer = false) }
+
     @Test
     fun videoFromTheFileList() {
         val vm = MainViewModel(app)
+        fullPlayer(vm)
         start(vm)
         waitFor { vm.volumes.value.isNotEmpty() }
         openFolder(vm, trip)
@@ -250,6 +271,7 @@ class PlayerFlowTest {
     @Test
     fun galleryAndSettings() {
         val vm = MainViewModel(app).also { it.gallery.source = { ctx -> MediaLibrary.scanFolders(ctx) } }
+        fullPlayer(vm)
         start(vm)
         waitFor { vm.volumes.value.isNotEmpty() }
         val clips = listOf("01_제주 도착.mp4", "02_성산일출봉.mp4").map { name ->
@@ -264,14 +286,15 @@ class PlayerFlowTest {
         assertEquals(1, vm.player.ui.value!!.index)
         compose.runOnIdle { vm.player.close() }
 
-        // With the setting off, videos go to another app as before.
-        compose.runOnIdle { vm.updateSettings { it.copy(playerInApp = false) } }
-        compose.runOnIdle { vm.openMedia(clips[0], clips) }
+        // Videos never go to another app: "Open with" and "Open as video" play them here too.
         openFolder(vm, trip)
-        compose.runOnIdle { vm.onItemClick(vm.visibleItems.value.first { it.name == "03_우도.mkv" }) }
-        settle()
-        assertNull(vm.player.ui.value)
-        compose.runOnIdle { vm.updateSettings { it.copy(playerInApp = true) } }
+        val island = File(trip, "03_우도.mkv").path
+        compose.runOnIdle { vm.openWith(island) }
+        waitFor { vm.player.ui.value?.current?.name == "03_우도.mkv" && vm.player.ui.value?.prepared == true }
+        compose.runOnIdle { vm.player.close() }
+        compose.runOnIdle { vm.openAs(island, "video/*") }
+        waitFor { vm.player.ui.value?.prepared == true }
+        compose.runOnIdle { vm.player.close() }
 
         // Deleting the file on screen closes the player.
         compose.runOnIdle { vm.onItemClick(vm.visibleItems.value.first { it.name == "03_우도.mkv" }) }
@@ -284,6 +307,7 @@ class PlayerFlowTest {
     @Config(qualifiers = "en-rUS-w891dp-h411dp-land-xhdpi")
     fun englishPlayer() {
         val vm = MainViewModel(app)
+        fullPlayer(vm)
         start(vm)
         waitFor { vm.volumes.value.isNotEmpty() }
         openFolder(vm, trip)
@@ -299,6 +323,87 @@ class PlayerFlowTest {
         settle()
         screen("66_en_player_menu")
         back()
+        compose.runOnIdle { vm.player.close() }
+    }
+
+    @Test
+    fun photosAndVideosTogether() {
+        // A photo between the videos: the viewer swipes through both, videos playing in place.
+        val bmp = android.graphics.Bitmap.createBitmap(480, 360, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(bmp).drawColor(android.graphics.Color.rgb(90, 160, 220))
+        java.io.FileOutputStream(File(trip, "01_해변.jpg")).use { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+        val vm = MainViewModel(app)
+        start(vm)
+        waitFor { vm.volumes.value.isNotEmpty() }
+        openFolder(vm, trip)
+        val arrival = vm.visibleItems.value.first { it.name == "01_제주 도착.mp4" }
+        compose.runOnIdle { vm.onItemClick(arrival) }
+        waitFor { vm.gallery.viewer.value != null }
+        val items = vm.gallery.viewer.value!!.items!!.map { it.name }
+        assertEquals(listOf("01_제주 도착.mp4", "01_해변.jpg"), items.take(2))
+        assertTrue("01_해변.jpg" in items && "04_옛날 영상.avi" in items)
+        // No full player: the video plays inside the viewer.
+        assertNull(vm.player.ui.value)
+        settle(800)
+        screen("67_viewer_video")
+
+        // Swipe to the next item: the photo.
+        compose.onRoot().performTouchInput { swipeLeft() }
+        settle(800)
+        screen("68_viewer_photo")
+        assertNull(vm.player.ui.value)
+
+        // Back to the video, then "Player" opens the full player on it.
+        compose.onRoot().performTouchInput { swipeRight() }
+        settle(800)
+        compose.onAllNodesWithText("플레이어").onLast().performClick()
+        waitFor { vm.player.ui.value?.prepared == true }
+        assertEquals("01_제주 도착.mp4", vm.player.ui.value!!.current!!.name)
+        compose.runOnIdle { vm.player.close() }
+    }
+
+    @Test
+    fun subtitlesPickedByHandAreRemembered() {
+        val vm = MainViewModel(app)
+        fullPlayer(vm)
+        start(vm)
+        waitFor { vm.volumes.value.isNotEmpty() }
+        openFolder(vm, trip)
+
+        // No subtitle next to this video; one picked by hand from another folder.
+        val island = vm.visibleItems.value.first { it.name == "03_우도.mkv" }
+        compose.runOnIdle { vm.onItemClick(island) }
+        waitFor { vm.player.ui.value?.prepared == true }
+        assertNull(vm.player.ui.value!!.subtitle)
+        val picked = File(root, "Download/자막 모음/우도 한글.srt").apply {
+            parentFile?.mkdirs()
+            writeText("1\n00:00:00,000 --> 00:00:30,000\n우도에 도착!\n")
+        }
+        compose.runOnIdle { vm.player.addSubtitleFile(Uri.fromFile(picked)) }
+        waitFor { (vm.player.ui.value?.subtitle as? SubtitleSource.External)?.path == picked.path }
+        compose.runOnIdle { vm.player.seekTo(1_000) }
+        waitFor { vm.player.subtitleText.value == "우도에 도착!" }
+        clickLast("자막")
+        settle()
+        screen("69_player_subtitle_picked")
+        back()
+        compose.runOnIdle { vm.player.close() }
+
+        // Opening the video again turns the picked file on by itself.
+        compose.runOnIdle { vm.onItemClick(island) }
+        waitFor { (vm.player.ui.value?.subtitle as? SubtitleSource.External)?.path == picked.path }
+        compose.runOnIdle { vm.player.close() }
+
+        // Turned off for a video that has its own subtitle: it stays off next time.
+        val peak = vm.visibleItems.value.first { it.name == "02_성산일출봉.mp4" }
+        compose.runOnIdle { vm.onItemClick(peak) }
+        waitFor { vm.player.ui.value?.subtitle != null }
+        compose.runOnIdle { vm.player.selectSubtitle(null) }
+        compose.runOnIdle { vm.player.close() }
+        compose.runOnIdle { vm.onItemClick(peak) }
+        waitFor { vm.player.ui.value?.prepared == true }
+        settle(600)
+        assertNull(vm.player.ui.value!!.subtitle)
         compose.runOnIdle { vm.player.close() }
     }
 }

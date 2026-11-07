@@ -41,6 +41,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.offlinefiles.explorer.R
+import com.offlinefiles.explorer.core.FileKind
 import com.offlinefiles.explorer.core.FileItem
 import com.offlinefiles.explorer.core.archive.ArchiveFormats
 import com.offlinefiles.explorer.ui.DialogState
@@ -110,7 +111,8 @@ fun ItemActionsSheet(vm: MainViewModel, item: FileItem, onDismiss: () -> Unit) {
         } else {
             SheetAction(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.action_open)) { act { vm.onItemClick(item) } }
         }
-        if (!item.isDirectory) {
+        // Videos and music only play in this app (VLC); other files can go to another app.
+        if (!item.isDirectory && item.kind != FileKind.VIDEO && item.kind != FileKind.AUDIO) {
             SheetAction(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.action_open_with)) { act { vm.openWith(item.path) } }
         }
         SheetAction(Icons.Filled.ContentCopy, stringResource(R.string.action_copy)) { act { vm.startCopy(listOf(item.path), move = false) } }

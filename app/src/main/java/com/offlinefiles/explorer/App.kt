@@ -1,6 +1,7 @@
 package com.offlinefiles.explorer
 
 import android.app.Application
+import com.offlinefiles.explorer.data.CrashLog
 import com.offlinefiles.explorer.data.PlayerStore
 import com.offlinefiles.explorer.data.Prefs
 import com.offlinefiles.explorer.data.Stores
@@ -30,6 +31,7 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashLog.install(this)
         prefs = Prefs(this)
         operations = OperationManager(appScope)
         playerStore = PlayerStore(this)

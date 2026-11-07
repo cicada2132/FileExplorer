@@ -207,4 +207,74 @@ class PlayerCoreTest {
         assertFalse(Resume.applies(240_000, isVideo = false))
         assertTrue(Resume.applies(3_600_000, isVideo = false))
     }
+
+    @Test
+    fun brokenSubtitlesAndAutoChoice() {
+        // Out-of-range character references and missing ASS fields are skipped, not thrown.
+        assertEquals("a &#99999999; b", Subtitles.cleanMarkup("a &#99999999; b"))
+        assertEquals("가", Subtitles.cleanMarkup("&#44032;"))
+        val ass = "[Events]\nFormat: Layer, End, Text\nDialogue: 0,0:00:02.00,hello\n"
+        assertTrue(Subtitles.parseAss(ass).isEmpty())
+        val smi = File(tmp.root, "bad.smi").apply { writeText("<SAMI><BODY><SYNC Start=10><P>&#2147483647;</SAMI>") }
+        Subtitles.load(smi)
+
+        // Names that belong to "Movie.mkv" (and ones that don't).
+        for (n in listOf("Movie.srt", "movie.KO.srt", "Movie_kor.smi", "Movie-ko.srt", "Movie [한글].smi", "Movie (Korean).ass")) {
+            assertTrue(n, Subtitles.matches("Movie.mkv", n))
+        }
+        assertFalse(Subtitles.matches("Movie.mkv", "Movies.srt"))
+        assertFalse(Subtitles.matches("Movie.mkv", "Other.Movie.srt"))
+
+        // Language words count as whole words only.
+        assertTrue(Subtitles.mentionsLanguage("Movie.2024.kor", "ko"))
+        assertTrue(Subtitles.mentionsLanguage("영화 한글자막", "ko"))
+        assertTrue(Subtitles.mentionsLanguage("Track 2 - [Korean]", "ko"))
+        assertFalse(Subtitles.mentionsLanguage("Korea.Trip.eng", "ko"))
+        assertTrue(Subtitles.mentionsLanguage("Korea.Trip.eng", "en"))
+
+        // Only one video in the folder: a subtitle with another name is still used, Korean first.
+        val dir = tmp.newFolder("single")
+        val video = File(dir, "a1b2c3.mkv").apply { writeText("x") }
+        listOf("The.Film.English.srt", "The.Film.Korean.srt").forEach { File(dir, it).writeText("x") }
+        val found = Subtitles.findFor(video, dir.listFiles()!!.toList())
+        assertNull(Subtitles.preferred(video, found, "ko"))
+        assertEquals("The.Film.Korean.srt", Subtitles.preferred(video, found, "ko", onlyVideoInFolder = true)?.name)
+        assertEquals("The.Film.English.srt", Subtitles.preferred(video, found, "en", onlyVideoInFolder = true)?.name)
+
+        // SAMI files: the track in the user's language.
+        val sami = Subtitles.parse(
+            "<SAMI><HEAD><STYLE>.ENCC { Name:English; } .KRCC { Name:한국어; }</STYLE></HEAD><BODY>" +
+                "<SYNC Start=0><P Class=ENCC>Hi<SYNC Start=0><P Class=KRCC>안녕</BODY></SAMI>",
+            "smi",
+            "x.smi",
+        )
+        assertEquals("안녕", sami[Subtitles.preferredTrack(sami, "ko")].textAt(100))
+        assertEquals("Hi", sami[Subtitles.preferredTrack(sami, "en")].textAt(100))
+        assertEquals(0, Subtitles.preferredTrack(sami, "ja"))
+    }
+
+    @Test
+    fun decoderChoice() {
+        // Old formats go to VLC's own decoders; modern containers try the phone's hardware first.
+        for (n in listOf("옛날 영상.AVI", "clip.divx", "tv.mpg", "dvd.VOB", "a.mpeg", "b.wmv", "c.flv", "d.rmvb", "e.3gp")) {
+            assertFalse(n, DecoderChoice.hardwareFirst(n))
+        }
+        for (n in listOf("movie.mp4", "movie.MKV", "clip.webm", "a.mov", "b.ts", "c.m2ts", "noext")) {
+            assertTrue(n, DecoderChoice.hardwareFirst(n))
+        }
+        // What VLC finds inside decides too: DivX in an MKV is decoded in software.
+        assertTrue(DecoderChoice.hardwareSuits("h264"))
+        assertTrue(DecoderChoice.hardwareSuits("hevc"))
+        assertTrue(DecoderChoice.hardwareSuits("VP90"))
+        assertTrue(DecoderChoice.hardwareSuits("av01"))
+        assertTrue(DecoderChoice.hardwareSuits(null))
+        assertFalse(DecoderChoice.hardwareSuits("mp4v"))
+        assertFalse(DecoderChoice.hardwareSuits("mpgv"))
+        assertFalse(DecoderChoice.hardwareSuits("WMV3"))
+        // VLC's codec numbers are four characters, lowest byte first.
+        fun fourcc(s: String) = s.foldIndexed(0) { i, acc, c -> acc or (c.code shl (8 * i)) }
+        assertEquals("h264", DecoderChoice.fourccName(fourcc("h264")))
+        assertEquals("mp4v", DecoderChoice.fourccName(fourcc("mp4v")))
+        assertNull(DecoderChoice.fourccName(0))
+    }
 }

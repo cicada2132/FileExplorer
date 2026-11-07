@@ -1,6 +1,15 @@
 package com.offlinefiles.explorer.ui.settings
 
 import android.os.Build
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import com.offlinefiles.explorer.data.UsbDiagnostics
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -26,10 +35,11 @@ import androidx.compose.material.icons.filled.FolderCopy
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.ViewCarousel
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -118,8 +128,10 @@ fun SettingsScreen(vm: MainViewModel) {
                 vm.updateSettings { it.copy(openMediaInApp = on) }
             }
             Section(stringResource(R.string.settings_player))
-            SwitchRow(Icons.Filled.PlayCircle, stringResource(R.string.settings_player_in_app), stringResource(R.string.settings_player_in_app_desc), s.playerInApp) { on ->
-                vm.updateSettings { it.copy(playerInApp = on) }
+            if (s.openMediaInApp) {
+                SwitchRow(Icons.Filled.ViewCarousel, stringResource(R.string.settings_videos_in_viewer), stringResource(R.string.settings_videos_in_viewer_desc), s.videosInViewer) { on ->
+                    vm.updateSettings { it.copy(videosInViewer = on) }
+                }
             }
             SwitchRow(Icons.Filled.History, stringResource(R.string.settings_resume), stringResource(R.string.settings_resume_desc), s.resumePlayback) { on ->
                 vm.updateSettings { it.copy(resumePlayback = on) }
@@ -129,20 +141,55 @@ fun SettingsScreen(vm: MainViewModel) {
             val volumes by vm.volumes.collectAsStateWithLifecycle()
             var forgotten by remember { mutableStateOf(false) }
             val granted by produceState(0, volumes) { value = withContext(Dispatchers.IO) { StorageVolumes.grantedTrees(context).size } }
+            var diagnostics by remember { mutableStateOf(false) }
+            Section(stringResource(R.string.settings_storage))
             if (granted > 0 && !forgotten) {
-                Section(stringResource(R.string.settings_storage))
                 InfoRow(Icons.Filled.Usb, stringResource(R.string.settings_usb_access), stringResource(R.string.settings_usb_access_desc)) {
                     forgotten = true
                     vm.forgetDriveAccess()
                 }
             }
+            InfoRow(Icons.Filled.BugReport, stringResource(R.string.settings_usb_diag), stringResource(R.string.settings_usb_diag_desc)) {
+                diagnostics = true
+            }
+            if (diagnostics) UsbDiagnosticsDialog(onDismiss = { diagnostics = false })
             Section(stringResource(R.string.settings_about))
             InfoRow(Icons.Filled.WifiOff, stringResource(R.string.settings_offline), stringResource(R.string.settings_offline_desc))
-            InfoRow(Icons.Filled.Info, stringResource(R.string.settings_version), BuildConfig.VERSION_NAME)
+            InfoRow(Icons.Filled.Info, stringResource(R.string.settings_version), "${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_ID})")
             InfoRow(Icons.Filled.Description, stringResource(R.string.licenses_title), stringResource(R.string.licenses_desc), onClick = vm::openLicenses)
             Spacer(Modifier.height(24.dp))
         }
     }
+}
+
+/** How Android describes the drives and what happened the last times one was opened, to copy and send. */
+@Composable
+private fun UsbDiagnosticsDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val report by produceState<String?>(null) { value = withContext(Dispatchers.IO) { UsbDiagnostics.report(context) } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Filled.BugReport, null) },
+        title = { Text(stringResource(R.string.settings_usb_diag)) },
+        text = {
+            SelectionContainer {
+                Text(
+                    report ?: "…",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = report != null, onClick = {
+                val cm = context.getSystemService(ClipboardManager::class.java)
+                cm?.setPrimaryClip(ClipData.newPlainText("USB diagnostics", report))
+                Toast.makeText(context, R.string.msg_diag_copied, Toast.LENGTH_SHORT).show()
+            }) { Text(stringResource(R.string.action_copy)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) } },
+    )
 }
 
 @Composable
@@ -197,6 +244,7 @@ private val libraries = listOf(
     Library("Jetpack Compose, AndroidX Core / Activity / Lifecycle", "The Android Open Source Project", "Apache License 2.0"),
     Library("Material Icons", "Google", "Apache License 2.0"),
     Library("Kotlin Standard Library", "JetBrains s.r.o.", "Apache License 2.0"),
+    Library("AndroidX ExifInterface", "The Android Open Source Project", "Apache License 2.0"),
     Library("kotlinx.coroutines", "JetBrains s.r.o.", "Apache License 2.0"),
     Library("Apache Commons Compress", "The Apache Software Foundation", "Apache License 2.0"),
     Library("Apache Commons IO", "The Apache Software Foundation", "Apache License 2.0"),
@@ -204,6 +252,7 @@ private val libraries = listOf(
     Library("Apache Commons Codec", "The Apache Software Foundation", "Apache License 2.0"),
     Library("Zip4j", "Srikanth Reddy Lingala", "Apache License 2.0"),
     Library("XZ for Java", "Lasse Collin, Igor Pavlov", "0BSD"),
+    Library("libVLC (VLC media player engine, with FFmpeg and other codecs)", "VideoLAN and VLC authors", "GNU LGPL 2.1 or later"),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

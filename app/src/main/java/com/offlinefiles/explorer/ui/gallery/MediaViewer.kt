@@ -52,6 +52,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.CircularProgressIndicator
@@ -155,6 +157,8 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
     val start = remember { items.indexOfFirst { it.path == request.startPath }.coerceAtLeast(0) }
     val pager = rememberPagerState(initialPage = start) { items.size }
     val current = items.getOrNull(pager.currentPage)
+    // The video playing in place on the current page, if any (for "open in the player" at its position).
+    var inline by remember { mutableStateOf<InlinePlayer?>(null) }
 
     // The last item was deleted (or moved away): nothing left to show.
     val empty = items.isEmpty()
@@ -179,7 +183,17 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
             val item = items.getOrNull(page)
             if (item != null) {
                 if (item.isVideo) {
-                    VideoPage(item, onTap = { chrome = !chrome }, onPlay = { vm.openMedia(item, items) })
+                    val frame = rememberVideoFrame(item)
+                    InlineVideoPage(
+                        item = item,
+                        // Only the page that has settled on screen plays; neighbours show a still.
+                        active = page == pager.settledPage && !pager.isScrollInProgress,
+                        frame = frame,
+                        controls = chrome,
+                        onTap = { chrome = !chrome },
+                        onPlayingChange = { },
+                        playerRef = { p -> if (page == pager.settledPage || p == null) inline = p },
+                    )
                 } else {
                     ImagePage(
                         item = item,
@@ -193,7 +207,12 @@ private fun MediaViewer(vm: MainViewModel, request: ViewerRequest, snackbar: Sna
         }
         if (current != null) {
             ViewerTopBar(vm, current, chrome) { g.closeViewer(current.path) }
-            ViewerBottomBar(vm, current, chrome, onPlay = { vm.openMedia(current, items) })
+            ViewerBottomBar(vm, current, chrome, onPlay = {
+                val p = inline
+                val at = p?.position ?: 0L
+                p?.pause()
+                vm.openMedia(current, items, positionMs = at)
+            })
         }
         SnackbarHost(
             snackbar,
@@ -240,44 +259,16 @@ private fun ImagePage(
     }
 }
 
+/** The grid's thumbnail at once, then a sharper still frame once decoded. */
 @Composable
-private fun VideoPage(item: MediaItem, onTap: () -> Unit, onPlay: () -> Unit) {
+private fun rememberVideoFrame(item: MediaItem): ImageBitmap? {
     val maxSide = rememberDecodeSize()
     val placeholder = remember(item.path, item.dateModified) { Thumbnails.peekMediaAny(item)?.asImageBitmap() }
     val frame by produceState(placeholder, item.path, item.dateModified) {
         val big = withContext(Dispatchers.IO) { MediaDecode.videoFrame(item, maxSide / 2) }
         if (big != null) value = big.asImageBitmap()
     }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) { detectTapGestures(onTap = { onTap() }) },
-        contentAlignment = Alignment.Center,
-    ) {
-        val f = frame
-        if (f != null) {
-            Image(f, contentDescription = item.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-        } else {
-            Icon(Icons.Filled.Movie, contentDescription = item.name, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(96.dp))
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Surface(onClick = onPlay, shape = CircleShape, color = Color.Black.copy(alpha = 0.55f), contentColor = Color.White) {
-                Icon(Icons.Filled.PlayArrow, stringResource(R.string.action_play), modifier = Modifier.padding(14.dp).size(52.dp))
-            }
-            if (item.durationMs > 0) {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    MediaDates.duration(item.durationMs),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                )
-            }
-        }
-    }
+    return frame
 }
 
 @Composable
@@ -538,9 +529,12 @@ private fun BoxScope.ViewerTopBar(vm: MainViewModel, item: MediaItem, visible: B
                     Icon(Icons.Filled.MoreVert, stringResource(R.string.action_more), tint = Color.White)
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    MenuItem(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.action_open_with)) {
-                        menu = false
-                        vm.openWith(item.path)
+                    // Photos may go to another app; videos only play here.
+                    if (!item.isVideo) {
+                        MenuItem(Icons.AutoMirrored.Filled.OpenInNew, stringResource(R.string.action_open_with)) {
+                            menu = false
+                            vm.openWith(item.path)
+                        }
                     }
                     MenuItem(Icons.Filled.FolderOpen, stringResource(R.string.action_show_in_folder)) {
                         menu = false
@@ -582,7 +576,8 @@ private fun BoxScope.ViewerBottomBar(vm: MainViewModel, item: MediaItem, visible
         ) {
             ViewerAction(Icons.Filled.Share, stringResource(R.string.action_share)) { vm.share(listOf(item.path)) }
             if (item.isVideo) {
-                ViewerAction(Icons.Filled.PlayArrow, stringResource(R.string.action_play), onPlay)
+                // The video plays in place; this opens the full player (subtitles, speed, gestures) where it got to.
+                ViewerAction(Icons.Filled.Fullscreen, stringResource(R.string.viewer_open_player), onPlay)
             }
             ViewerAction(Icons.Filled.Info, stringResource(R.string.action_details)) { vm.showDialog(DialogState.MediaInfo(item)) }
             ViewerAction(Icons.Filled.Delete, stringResource(R.string.action_delete)) {

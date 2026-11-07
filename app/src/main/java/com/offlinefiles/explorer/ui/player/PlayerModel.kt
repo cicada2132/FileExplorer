@@ -9,11 +9,8 @@ import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.MediaFormat
 import android.media.MediaMetadata
 import android.media.MediaMetadataRetriever
-import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
@@ -21,7 +18,17 @@ import android.os.SystemClock
 import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.offlinefiles.explorer.R
+import android.net.Uri
+import android.os.Environment
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
+import com.offlinefiles.explorer.core.FileKind
+import com.offlinefiles.explorer.core.FileTypes
+import com.offlinefiles.explorer.core.ListResult
+import com.offlinefiles.explorer.data.StorageVolumes
+import com.offlinefiles.explorer.data.SubtitleChoice
 import com.offlinefiles.explorer.core.player.AspectMode
+import com.offlinefiles.explorer.core.player.DecoderChoice
 import com.offlinefiles.explorer.core.player.PlayQueue
 import com.offlinefiles.explorer.core.player.PlaybackSpeed
 import com.offlinefiles.explorer.core.player.RepeatMode
@@ -31,6 +38,8 @@ import com.offlinefiles.explorer.core.player.SubtitleTrack
 import com.offlinefiles.explorer.core.player.Subtitles
 import com.offlinefiles.explorer.data.PlayerStore
 import com.offlinefiles.explorer.data.Stores
+import com.offlinefiles.explorer.data.UsbDiagnostics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,7 +58,7 @@ import kotlin.math.max
 /** One file in the play queue. */
 data class PlayItem(val path: String, val name: String, val isVideo: Boolean)
 
-/** An audio track of the file; [index] is MediaPlayer's track number. */
+/** An audio track of the file; [index] is the engine's track number. */
 data class TrackOption(val index: Int, val label: String)
 
 /** An entry of the subtitle menu: a track inside the video, or a subtitle file (one language of it). */
@@ -80,6 +89,8 @@ data class PlayerUi(
     val playing: Boolean = false,
     val ended: Boolean = false,
     val error: Boolean = false,
+    /** What VLC said when the file couldn't be played, if anything. */
+    val errorDetail: String? = null,
     /** The video has drawn its first frame (until then the still frame stands in). */
     val firstFrame: Boolean = false,
     val durationMs: Long = 0,
@@ -108,14 +119,20 @@ data class PlayerUi(
     /** Set when the file started where it was left off last time. */
     val resumedFrom: Long? = null,
     val meta: MediaMeta? = null,
+    /** The engine playing the file ("vlc"), once a file is loading. */
+    val engine: String = "",
+    /** Sound shifted against the picture (VLC only); positive: sound later. */
+    val audioDelayMs: Long = 0,
+    /** VLC: hardware decoders where possible. */
+    val hwDecoding: Boolean = true,
 ) {
     val current: PlayItem? get() = queue.getOrNull(index)
     val isVideo: Boolean get() = current?.isVideo == true
 }
 
 /**
- * The built-in player: one framework MediaPlayer (no extra libraries), a play queue, subtitles,
- * audio focus and headset buttons. Lives in MainViewModel, so playback carries on through
+ * The built-in player: libVLC for every file (Android's own MediaPlayer is not used, see
+ * [Engine]), a play queue, subtitles, audio focus and headset buttons. Lives in MainViewModel, so playback carries on through
  * rotation; the screen only lends it a Surface to draw on.
  */
 class PlayerModel(
@@ -135,15 +152,27 @@ class PlayerModel(
     private val _subtitleText = MutableStateFlow<String?>(null)
     val subtitleText: StateFlow<String?> = _subtitleText.asStateFlow()
 
-    private var player: MediaPlayer? = null
+    private var player: Engine? = null
     private var prepared = false
     private var surface: Surface? = null
+    private var subtitleSurface: Surface? = null
+    /** The user picked (or turned off) a subtitle for the file on screen: no more automatic picks. */
+    private var subtitleTouched = false
+    private var sidecarsDone = false
+    private var rememberedSubtitle: SubtitleChoice? = null
+    private var surfaceW = 0
+    private var surfaceH = 0
     private var order: List<Int> = emptyList()
     private var nextToken = 1L
     private var loadCounter = 0L
     private var appliedSpeed = 1f
     private var ticker: Job? = null
     private var sidecarJob: Job? = null
+    /** Retries in software when hardware decoding shows no picture (see [play]). */
+    private var watchdog: Job? = null
+    private var autoplayCurrent = true
+    /** The file on screen was reopened with VLC's software decoders after hardware decoding failed. */
+    private var softwareOnly = false
 
     private var seekInFlightSince = 0L
     private var pendingSeek: Pair<Long, Boolean>? = null
@@ -183,6 +212,7 @@ class PlayerModel(
             aspect = store.aspect,
             rotation = store.rotation,
             subtitleScale = store.subtitleScale,
+            hwDecoding = store.hwDecoding,
         )
         startSession()
         registerNoisy()
@@ -212,7 +242,11 @@ class PlayerModel(
         if (paths.any { path == it || path.startsWith("$it/") }) close()
     }
 
-    private fun load(index: Int, autoplay: Boolean = true) {
+    /**
+     * [software]: VLC's own decoders only (a retry after hardware decoding failed, or the user's
+     * choice). [startAt] overrides the remembered resume point (a retry carries on where it was).
+     */
+    private fun load(index: Int, autoplay: Boolean = true, software: Boolean = false, startAt: Long? = null) {
         val s = _ui.value ?: return
         val item = s.queue.getOrNull(index) ?: return
         stopCurrent()
@@ -221,53 +255,125 @@ class PlayerModel(
         embeddedText = null
         embeddedOptions = emptyList()
         externalFiles = emptyList()
+        subtitleTouched = false
+        sidecarsDone = false
+        rememberedSubtitle = if (item.isVideo) store.subtitleChoice(item.path) else null
         _subtitleText.value = null
         _position.value = 0
         _ui.value = s.copy(
-            index = index, loadId = id, prepared = false, playing = false, ended = false, error = false,
+            index = index, loadId = id, prepared = false, playing = false, ended = false, error = false, errorDetail = null,
             firstFrame = false, durationMs = 0, videoW = 0, videoH = 0, boost = false, abA = null, abB = null,
             audioTracks = emptyList(), audioTrack = -1, subtitles = emptyList(), subtitle = null, subtitleDelayMs = 0,
-            resumedFrom = null, meta = null,
+            resumedFrom = null, meta = null, engine = "", audioDelayMs = 0,
             canNext = PlayQueue.step(order, index, 1, s.repeat) != null,
             canPrevious = PlayQueue.step(order, index, -1, s.repeat) != null,
         )
-        val resumeAt = if (resumeEnabled()) store.position(item.path) else null
-        val mp = MediaPlayer()
-        player = mp
-        prepared = false
-        appliedSpeed = 1f
-        mp.setAudioAttributes(attributes(item.isVideo))
-        mp.setOnPreparedListener { if (player === it) onPrepared(it, autoplay, resumeAt) }
-        mp.setOnCompletionListener { if (player === it && prepared) onCompletion() }
-        mp.setOnErrorListener { p, _, _ ->
-            if (player === p) onError()
-            true
-        }
-        mp.setOnInfoListener { p, what, _ ->
-            if (player === p && what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) update { it.copy(firstFrame = true) }
-            false
-        }
-        mp.setOnVideoSizeChangedListener { p, w, h ->
-            if (player === p && w > 0 && h > 0) update { it.copy(videoW = w, videoH = h) }
-        }
-        mp.setOnSeekCompleteListener { p -> if (player === p) onSeekComplete() }
-        mp.setOnTimedTextListener { p, text ->
-            if (player === p) {
-                embeddedText = text?.text?.let(Subtitles::cleanMarkup)?.ifBlank { null }
+        val resumeAt = startAt ?: if (resumeEnabled()) store.position(item.path) else null
+        autoplayCurrent = autoplay
+        softwareOnly = software
+        // Hardware decoding only for the modern codecs it handles well; AVI, MPG, WMV... in software.
+        val hardware = store.hwDecoding && !software && DecoderChoice.hardwareFirst(item.name)
+        lateinit var engine: Engine
+        val listener = object : EngineListener {
+            private fun mine() = player === engine
+
+            override fun onPrepared() {
+                if (mine()) this@PlayerModel.onPrepared(engine, autoplay, resumeAt)
+            }
+
+            override fun onCompletion() {
+                if (mine() && prepared) this@PlayerModel.onCompletion()
+            }
+
+            override fun onError(detail: String) {
+                if (mine()) onEngineError(engine, detail)
+            }
+
+            override fun onFirstFrame() {
+                if (mine()) update { it.copy(firstFrame = true) }
+            }
+
+            override fun onVideoSize(width: Int, height: Int) {
+                if (mine()) update { it.copy(videoW = width, videoH = height) }
+            }
+
+            override fun onSeekComplete() {
+                if (mine()) this@PlayerModel.onSeekComplete()
+            }
+
+            override fun onTimedText(text: String?) {
+                if (!mine()) return
+                embeddedText = text?.let(Subtitles::cleanMarkup)?.ifBlank { null }
                 refreshSubtitle()
             }
+
+            override fun onTracksChanged() {
+                if (mine() && prepared) applyTracks(engine)
+            }
         }
-        try {
-            // USB drives opened through the system picker have no file paths: play through the provider.
-            val tree = Stores.tree(item.path)
-            if (tree != null) mp.setDataSource(context, tree.documentUri(item.path)) else mp.setDataSource(item.path)
-            if (item.isVideo) surface?.let { mp.setSurface(it) }
-            mp.prepareAsync()
-        } catch (e: Exception) {
+        val created = Engines.create(context, listener, hardware)
+        if (created == null) {
+            // VLC's native code can't run on this device: nothing can play here.
+            UsbDiagnostics.log(context, "player: VLC unavailable for ${item.name}")
+            player = null
             onError()
+            return
         }
-        loadSidecars(item, id, resumeAt)
-        updateSession()
+        engine = created
+        player = engine
+        if (item.isVideo) runCatching { engine.setSubtitleSurface(subtitleSurface) }
+        prepared = false
+        appliedSpeed = 1f
+        update { it.copy(engine = engine.name) }
+        try {
+            engine.open(item, attributes(item.isVideo), if (item.isVideo) surface else null, surfaceW, surfaceH)
+        } catch (e: Exception) {
+            onEngineError(engine, "open: ${e.javaClass.simpleName}: ${e.message}")
+        }
+        if (player === engine) {
+            loadSidecars(item, id, resumeAt)
+            updateSession()
+        }
+    }
+
+    private fun onEngineError(engine: Engine, detail: String) {
+        val s = _ui.value ?: return
+        val item = s.current ?: return
+        UsbDiagnostics.log(context, "player ${engine.name}${if (engine.hardware) " (hardware)" else ""} ${item.name}: $detail")
+        // Hardware decoding failed: VLC's own decoders get the file once more, from where it was.
+        if (engine.hardware && !softwareOnly) {
+            retryInSoftware(s.index, _position.value.takeIf { it > 0 })
+            return
+        }
+        onError(detail.substringAfter("vlc error", "").removePrefix(":").trim().ifBlank { null })
+    }
+
+    private fun retryInSoftware(index: Int, at: Long?) {
+        // Not a real stop: keep the remembered resume point as it is.
+        prepared = false
+        load(index, autoplayCurrent, software = true, startAt = at)
+    }
+
+    /** VLC: hardware decoders on or off; the current file reopens where it was. */
+    fun toggleHwDecoding() {
+        val s = _ui.value ?: return
+        store.hwDecoding = !store.hwDecoding
+        update { it.copy(hwDecoding = store.hwDecoding) }
+        if (s.isVideo) {
+            saveResume()
+            load(s.index, autoplay = s.playing || !prepared)
+        }
+    }
+
+    /** Moves the sound against the picture (VLC only). */
+    fun setAudioDelay(ms: Long) {
+        val v = ms.coerceIn(-MAX_AUDIO_DELAY, MAX_AUDIO_DELAY)
+        val mp = player ?: return
+        if (!runCatching { mp.setAudioDelay(v) }.getOrDefault(false)) {
+            message(R.string.player_track_failed)
+            return
+        }
+        update { it.copy(audioDelayMs = v) }
     }
 
     private fun attributes(video: Boolean): AudioAttributes = AudioAttributes.Builder()
@@ -275,10 +381,12 @@ class PlayerModel(
         .setContentType(if (video) AudioAttributes.CONTENT_TYPE_MOVIE else AudioAttributes.CONTENT_TYPE_MUSIC)
         .build()
 
-    /** Saves where the current file was left off and frees its MediaPlayer. */
+    /** Saves where the current file was left off and frees its engine. */
     private fun stopCurrent() {
         saveResume()
         sidecarJob?.cancel()
+        watchdog?.cancel()
+        watchdog = null
         val mp = player ?: return
         player = null
         prepared = false
@@ -287,9 +395,19 @@ class PlayerModel(
         runCatching { mp.release() }
     }
 
-    private fun onPrepared(mp: MediaPlayer, autoplay: Boolean, resumeAt: Long?) {
+    private fun onPrepared(mp: Engine, autoplay: Boolean, resumeAt: Long?) {
         prepared = true
-        val duration = runCatching { mp.duration.toLong() }.getOrDefault(0L).coerceAtLeast(0L)
+        // Opened with hardware decoding, but the video turns out to be an older codec (DivX in MKV,
+        // MPEG-2 in TS...): reopen it with VLC's own decoders before anything is shown.
+        if (mp.hardware && _ui.value?.isVideo == true) {
+            val codec = runCatching { mp.videoCodec() }.getOrNull()
+            if (!DecoderChoice.hardwareSuits(codec)) {
+                UsbDiagnostics.log(context, "player: video codec $codec → software decoding")
+                retryInSoftware(_ui.value!!.index, resumeAt)
+                return
+            }
+        }
+        val duration = runCatching { mp.duration }.getOrDefault(0L).coerceAtLeast(0L)
         val item = _ui.value?.current
         val resume = resumeAt?.takeIf {
             item != null && Resume.applies(duration, item.isVideo) && Resume.shouldRemember(it, duration)
@@ -314,6 +432,7 @@ class PlayerModel(
             )
         }
         rebuildSubtitleOptions()
+        autoSelectEmbedded()
         refreshSubtitle()
         if (autoplay) play() else updateSession()
     }
@@ -346,9 +465,9 @@ class PlayerModel(
         updateSession()
     }
 
-    private fun onError() {
+    private fun onError(detail: String? = null) {
         prepared = false
-        update { it.copy(error = true, playing = false, prepared = false, boost = false) }
+        update { it.copy(error = true, errorDetail = detail, playing = false, prepared = false, boost = false) }
         abandonFocus()
         updateSession()
     }
@@ -366,12 +485,27 @@ class PlayerModel(
         if (!requestFocus()) return
         try {
             mp.start()
-        } catch (e: IllegalStateException) {
+        } catch (e: Exception) {
             return
         }
         applySpeed(mp, if (s.boost) BOOST_SPEED else s.speed)
         update { it.copy(playing = true, ended = false) }
         updateSession()
+        watchForPicture(mp)
+    }
+
+    /** Hardware decoding that shows no picture after a few seconds of playing: reopen in software. */
+    private fun watchForPicture(mp: Engine) {
+        val s = _ui.value ?: return
+        if (!mp.hardware || !s.isVideo || s.firstFrame || watchdog != null) return
+        val id = loadCounter
+        watchdog = scope.launch {
+            delay(NO_PICTURE_TIMEOUT_MS)
+            val now = _ui.value ?: return@launch
+            if (loadCounter != id || player !== mp || !prepared || now.firstFrame || now.error) return@launch
+            UsbDiagnostics.log(context, "player: no picture after ${NO_PICTURE_TIMEOUT_MS / 1000}s with hardware decoding → software")
+            retryInSoftware(now.index, _position.value.takeIf { it > 0 })
+        }
     }
 
     fun pause() {
@@ -402,10 +536,10 @@ class PlayerModel(
 
     fun seekBy(deltaMs: Long) = seekTo(_position.value + deltaMs)
 
-    private fun doSeek(mp: MediaPlayer, target: Long, exact: Boolean) {
+    private fun doSeek(mp: Engine, target: Long, exact: Boolean) {
         seekInFlightSince = SystemClock.uptimeMillis().coerceAtLeast(1L)
         try {
-            mp.seekTo(target, if (exact) MediaPlayer.SEEK_CLOSEST else MediaPlayer.SEEK_PREVIOUS_SYNC)
+            mp.seekTo(target, exact)
         } catch (e: Exception) {
             seekInFlightSince = 0L
         }
@@ -420,7 +554,7 @@ class PlayerModel(
         if (p != null) {
             doSeek(mp, p.first, p.second)
         } else {
-            runCatching { mp.currentPosition.toLong() }.getOrNull()?.let { _position.value = it }
+            runCatching { mp.position }.getOrNull()?.let { _position.value = it }
             refreshSubtitle()
         }
     }
@@ -449,7 +583,8 @@ class PlayerModel(
     /** Retry after an error, e.g. once the storage is back. */
     fun reload() {
         val s = _ui.value ?: return
-        load(s.index)
+        // After an error: VLC's own (software) decoders, the most forgiving way to read a file.
+        load(s.index, software = true)
     }
 
     // ------------------------------------------------------------------ playback options
@@ -472,12 +607,9 @@ class PlayerModel(
     }
 
     /** Only while playing: on a paused MediaPlayer a non-zero speed also starts playback. */
-    private fun applySpeed(mp: MediaPlayer, speed: Float) {
+    private fun applySpeed(mp: Engine, speed: Float) {
         if (speed == appliedSpeed) return
-        runCatching {
-            mp.playbackParams = PlaybackParams().setSpeed(speed)
-            appliedSpeed = speed
-        }
+        if (runCatching { mp.setSpeed(speed) }.getOrDefault(false)) appliedSpeed = speed
     }
 
     fun cycleRepeat() {
@@ -542,17 +674,27 @@ class PlayerModel(
     fun selectAudioTrack(index: Int) {
         val mp = player ?: return
         if (!prepared) return
-        runCatching { mp.selectTrack(index) }
-            .onSuccess { update { it.copy(audioTrack = index) } }
-            .onFailure { message(R.string.player_track_failed) }
+        if (runCatching { mp.selectAudio(index) }.getOrDefault(false)) update { it.copy(audioTrack = index) }
+        else message(R.string.player_track_failed)
     }
 
     // ------------------------------------------------------------------ subtitles
 
-    fun selectSubtitle(choice: SubtitleSource?) {
+    /** [byUser]: picked in the subtitle menu (remembered for this video) rather than chosen automatically. */
+    fun selectSubtitle(choice: SubtitleSource?, byUser: Boolean = true) {
         val mp = player
         val current = _ui.value?.subtitle
-        if (current is SubtitleSource.Embedded && current.id != choice?.id) runCatching { mp?.deselectTrack(current.index) }
+        if (byUser) {
+            subtitleTouched = true
+            _ui.value?.current?.path?.let { video ->
+                when (choice) {
+                    null -> store.rememberSubtitle(video, SubtitleChoice.OFF)
+                    is SubtitleSource.External -> store.rememberSubtitle(video, SubtitleChoice(choice.path, choice.track))
+                    is SubtitleSource.Embedded -> Unit
+                }
+            }
+        }
+        if (current is SubtitleSource.Embedded && current.id != choice?.id) runCatching { mp?.deselectSubtitle(current.index) }
         embeddedText = null
         when (choice) {
             null -> {
@@ -560,12 +702,13 @@ class PlayerModel(
                 update { it.copy(subtitle = null) }
             }
             is SubtitleSource.Embedded -> {
-                if (mp == null || !prepared || runCatching { mp.selectTrack(choice.index) }.isFailure) {
-                    message(R.string.player_track_failed)
+                if (mp == null || !prepared || !runCatching { mp.selectSubtitle(choice.index) }.getOrDefault(false)) {
+                    if (byUser) message(R.string.player_track_failed)
                     return
                 }
                 activeTrack = null
                 update { it.copy(subtitle = choice) }
+                runCatching { mp.setSubtitleDelay(_ui.value?.subtitleDelayMs ?: 0L) }
             }
             is SubtitleSource.External -> {
                 val tracks = parsed[choice.path]
@@ -577,7 +720,7 @@ class PlayerModel(
                         parsed[choice.path] = loaded
                         rebuildSubtitleOptions()
                         if (loaded.isEmpty()) message(R.string.player_subtitle_unreadable)
-                        else selectSubtitle(choice.copy(label = loaded.getOrNull(choice.track)?.label ?: choice.label))
+                        else selectSubtitle(choice.copy(label = loaded.getOrNull(choice.track)?.label ?: choice.label), byUser = false)
                     }
                     return
                 }
@@ -594,7 +737,10 @@ class PlayerModel(
     }
 
     fun setSubtitleDelay(ms: Long) {
-        update { it.copy(subtitleDelayMs = ms.coerceIn(-MAX_SUBTITLE_DELAY, MAX_SUBTITLE_DELAY)) }
+        val v = ms.coerceIn(-MAX_SUBTITLE_DELAY, MAX_SUBTITLE_DELAY)
+        update { it.copy(subtitleDelayMs = v) }
+        // Tracks inside the file are timed by the engine (VLC); subtitle files by the app.
+        if (_ui.value?.subtitle is SubtitleSource.Embedded) runCatching { player?.setSubtitleDelay(v) }
         refreshSubtitle()
     }
 
@@ -625,28 +771,181 @@ class PlayerModel(
     /** Tags, artwork and the subtitle files next to the video, read off the main thread. */
     private fun loadSidecars(item: PlayItem, id: Long, resumeAt: Long?) {
         sidecarJob = scope.launch {
-            if (item.isVideo && !Stores.isDocument(item.path)) {
-                val file = File(item.path)
-                val found = withContext(Dispatchers.IO) {
-                    val all = Subtitles.findFor(file, file.parentFile?.listFiles()?.toList().orEmpty())
-                    val matching = all.filter { Subtitles.matches(file, it) }.take(MAX_EAGER_SUBTITLES)
-                    all to matching.associate { it.path to Subtitles.load(it) }
+            try {
+                loadSidecarsNow(item, id, resumeAt)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Extras only: a bad subtitle file or picture must never close the app.
+                UsbDiagnostics.log(context, "player extras ${item.name}: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun loadSidecarsNow(item: PlayItem, id: Long, resumeAt: Long?) {
+        if (item.isVideo) {
+            val language = Locale.getDefault().language
+            val remembered = rememberedSubtitle
+            val scan = withContext(Dispatchers.IO) { scanSubtitles(item, remembered, language) }
+            if (loadCounter != id) return
+            parsed.putAll(scan.parsed)
+            externalFiles = scan.files
+            rebuildSubtitleOptions()
+            if (!subtitleTouched && _ui.value?.subtitle == null) {
+                // What the user chose for this video last time wins; then a file in their language.
+                val pick: Pair<String, Int>? = when {
+                    remembered == SubtitleChoice.OFF -> null
+                    remembered?.path != null && !parsed[remembered.path].isNullOrEmpty() -> remembered.path to remembered.track
+                    else -> scan.preferred?.let { f ->
+                        parsed[f.path]?.takeIf { it.isNotEmpty() }?.let { f.path to Subtitles.preferredTrack(it, language) }
+                    }
                 }
-                if (loadCounter != id) return@launch
-                parsed.putAll(found.second)
-                externalFiles = found.first
-                rebuildSubtitleOptions()
-                val preferred = Subtitles.preferred(file, found.first, Locale.getDefault().language)
-                if (preferred != null && _ui.value?.subtitle == null && !parsed[preferred.path].isNullOrEmpty()) {
-                    val label = parsed[preferred.path]?.firstOrNull()?.label ?: preferred.name
-                    selectSubtitle(SubtitleSource.External(preferred.path, 0, label))
+                if (pick != null) {
+                    val tracks = parsed.getValue(pick.first)
+                    val t = pick.second.coerceIn(tracks.indices)
+                    selectSubtitle(SubtitleSource.External(pick.first, t, tracks[t].label), byUser = false)
                 }
             }
-            val meta = withContext(Dispatchers.IO) { readMeta(item, resumeAt) }
-            if (loadCounter != id) return@launch
-            update { it.copy(meta = meta) }
-            updateSession()
+            sidecarsDone = true
+            autoSelectEmbedded()
         }
+        val meta = withContext(Dispatchers.IO) { readMeta(item, resumeAt) }
+        if (loadCounter != id) return
+        update { it.copy(meta = meta) }
+        updateSession()
+    }
+
+    private class SubtitleScan(val files: List<File>, val parsed: Map<String, List<SubtitleTrack>>, val preferred: File?)
+
+    /**
+     * Subtitle files for [item]: those in its folder (on a USB drive opened through the file picker,
+     * copied to the cache to be read), plus the file picked by hand for it last time.
+     */
+    private fun scanSubtitles(item: PlayItem, remembered: SubtitleChoice?, language: String): SubtitleScan {
+        val video = File(item.path)
+        val dir = video.parent.orEmpty()
+        val tree = Stores.tree(item.path)
+        val siblings: List<File>
+        val videos: Int
+        if (tree == null) {
+            val list = video.parentFile?.listFiles()?.toList().orEmpty()
+            siblings = list
+            videos = list.count { it.isFile && FileTypes.kindOf(it.name) == FileKind.VIDEO }
+        } else {
+            val items = (tree.list(dir) as? ListResult.Ok)?.items.orEmpty()
+            videos = items.count { !it.isDirectory && FileTypes.kindOf(it.name) == FileKind.VIDEO }
+            val cache = File(context.cacheDir, "subtitles/usb/" + Integer.toHexString(dir.hashCode())).apply { mkdirs() }
+            siblings = items
+                .filter { !it.isDirectory && Subtitles.isSubtitle(it.name) && it.size in 1..Subtitles.MAX_BYTES }
+                .sortedByDescending { Subtitles.matches(video.name, it.name) }
+                .take(MAX_USB_SUBTITLES)
+                .mapNotNull { f ->
+                    val out = File(cache, f.name)
+                    if (out.length() == f.size && out.lastModified() >= f.lastModified) return@mapNotNull out
+                    runCatching {
+                        tree.openInput(f.path).use { input -> out.outputStream().use { input.copyTo(it) } }
+                        out
+                    }.getOrNull()
+                }
+        }
+        val inFolder = Subtitles.findFor(video, siblings)
+        val preferred = Subtitles.preferred(video, inFolder, language, onlyVideoInFolder = videos == 1)
+        // A file picked by hand from somewhere else last time.
+        val picked = remembered?.path?.let(::File)?.takeIf { f -> f.isFile && inFolder.none { it.path == f.path } }
+        val all = listOfNotNull(picked) + inFolder
+        val eager = (listOfNotNull(picked, preferred) + inFolder.filter { Subtitles.matches(video, it) })
+            .distinctBy { it.path }
+            .take(MAX_EAGER_SUBTITLES)
+        return SubtitleScan(all, eager.associate { it.path to Subtitles.load(it) }, preferred)
+    }
+
+    /**
+     * No subtitle file was chosen: turn on a subtitle track inside the file that is in the user's
+     * language (VLC names tracks like "Track 1 - [Korean]").
+     */
+    private fun autoSelectEmbedded() {
+        val s = _ui.value ?: return
+        if (!sidecarsDone || !prepared || subtitleTouched || s.subtitle != null) return
+        if (rememberedSubtitle == SubtitleChoice.OFF) return
+        val language = Locale.getDefault().language
+        val pick = embeddedOptions.firstOrNull { Subtitles.mentionsLanguage(it.label, language) } ?: return
+        selectSubtitle(pick, byUser = false)
+    }
+
+    /** A subtitle file the user picked in the system file picker (from any folder or drive). */
+    fun addSubtitleFile(uri: Uri) {
+        val loadId = _ui.value?.loadId ?: return
+        scope.launch {
+            val file = withContext(Dispatchers.IO) { importSubtitle(uri) }
+            if (_ui.value?.loadId != loadId) return@launch
+            val tracks = file?.let { withContext(Dispatchers.IO) { Subtitles.load(it) } }.orEmpty()
+            if (file == null || tracks.isEmpty()) {
+                message(R.string.player_subtitle_unreadable)
+                return@launch
+            }
+            parsed[file.path] = tracks
+            if (externalFiles.none { it.path == file.path }) externalFiles = listOf(file) + externalFiles
+            rebuildSubtitleOptions()
+            val t = Subtitles.preferredTrack(tracks, Locale.getDefault().language)
+            selectSubtitle(SubtitleSource.External(file.path, t, tracks[t].label))
+        }
+    }
+
+    /** The picked file itself when it is in the phone's storage, otherwise a copy kept in the app's files. */
+    private fun importSubtitle(uri: Uri): File? {
+        if (uri.scheme == "file") return uri.path?.let(::File)?.takeIf { it.isFile }
+        localPathOf(uri)?.let { p -> File(p).takeIf { it.isFile && it.canRead() }?.let { return it } }
+        val resolver = context.contentResolver
+        val name = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "subtitle.srt"
+        val dir = File(context.filesDir, "subtitles/" + Integer.toHexString(uri.toString().hashCode())).apply { mkdirs() }
+        val out = File(dir, name.replace(Regex("""[\\/:*?"<>|]"""), "_"))
+        return try {
+            val input = resolver.openInputStream(uri) ?: return null
+            input.use { inp ->
+                out.outputStream().use { o ->
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = inp.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > Subtitles.MAX_BYTES) return null
+                        o.write(buf, 0, n)
+                    }
+                }
+            }
+            out
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** "/storage/emulated/0/..." for a document of the phone's own storage in the system file picker. */
+    private fun localPathOf(uri: Uri): String? {
+        if (uri.authority != StorageVolumes.DOCS_AUTHORITY) return null
+        val id = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull() ?: return null
+        val root = id.substringBefore(':', "")
+        val rel = id.substringAfter(':', "")
+        return when {
+            root == "primary" -> File(Environment.getExternalStorageDirectory(), rel).path
+            root.isNotEmpty() -> File("/storage/$root", rel).path
+            else -> null
+        }
+    }
+
+    /** Where the subtitle file picker opens: the video's own folder when it can be named. */
+    fun subtitlePickerStart(): Uri? {
+        val path = _ui.value?.current?.path ?: return null
+        val dir = File(path).parent ?: return null
+        Stores.tree(dir)?.let { return runCatching { it.documentUri(dir) }.getOrNull() }
+        val primary = Environment.getExternalStorageDirectory().path
+        if (dir != primary && !dir.startsWith("$primary/")) return null
+        val rel = dir.removePrefix(primary).removePrefix("/")
+        return DocumentsContract.buildDocumentUri(StorageVolumes.DOCS_AUTHORITY, "primary:$rel")
     }
 
     private fun readMeta(item: PlayItem, resumeAt: Long?): MediaMeta? {
@@ -675,6 +974,8 @@ class PlayerModel(
             )
         } catch (e: Exception) {
             null
+        } catch (e: OutOfMemoryError) {
+            null
         } finally {
             runCatching { r.release() }
             runCatching { pfd?.close() }
@@ -690,26 +991,37 @@ class PlayerModel(
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
-    private data class Tracks(val audio: List<TrackOption>, val selectedAudio: Int, val subtitles: List<SubtitleSource.Embedded>)
+    private data class Tracks(
+        val audio: List<TrackOption>,
+        val selectedAudio: Int,
+        val subtitles: List<SubtitleSource.Embedded>,
+        val hasVideo: Boolean,
+    )
 
-    private fun readTracks(mp: MediaPlayer): Tracks {
-        val infos = runCatching { mp.trackInfo }.getOrNull() ?: return Tracks(emptyList(), -1, emptyList())
-        val audioTracks = ArrayList<TrackOption>()
-        val subs = ArrayList<SubtitleSource.Embedded>()
-        infos.forEachIndexed { i, t ->
-            when (t?.trackType) {
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO -> audioTracks += TrackOption(i, trackLabel(t, audioTracks.size + 1))
-                MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_TIMEDTEXT -> subs += SubtitleSource.Embedded(i, trackLabel(t, subs.size + 1))
-            }
-        }
-        val selected = runCatching { mp.getSelectedTrack(MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) }.getOrDefault(-1)
-        return Tracks(audioTracks, selected, subs)
+    private fun readTracks(mp: Engine): Tracks {
+        val t = runCatching { mp.tracks() }.getOrNull() ?: return Tracks(emptyList(), -1, emptyList(), hasVideo = true)
+        return Tracks(
+            audio = t.audio.mapIndexed { n, a -> TrackOption(a.index, trackLabel(a, n + 1)) },
+            selectedAudio = t.selectedAudio,
+            subtitles = t.subtitles.mapIndexed { n, a -> SubtitleSource.Embedded(a.index, trackLabel(a, n + 1)) },
+            hasVideo = t.hasVideo,
+        )
     }
 
-    /** "Track 2 · Korean · AC3". */
-    private fun trackLabel(t: MediaPlayer.TrackInfo, n: Int): String {
+    /** Tracks that turned up after the file started (VLC finds them as it reads). */
+    private fun applyTracks(mp: Engine) {
+        val tracks = readTracks(mp)
+        embeddedOptions = tracks.subtitles
+        update { it.copy(audioTracks = tracks.audio, audioTrack = tracks.selectedAudio) }
+        rebuildSubtitleOptions()
+        autoSelectEmbedded()
+    }
+
+    /** "Track 2 · Korean · AC3" (VLC names its tracks itself). */
+    private fun trackLabel(t: EngineTrack, n: Int): String {
+        t.name?.takeIf { it.isNotBlank() }?.let { return it }
         val lang = Languages.name(t.language)
-        val codec = runCatching { t.format?.getString(MediaFormat.KEY_MIME) }.getOrNull()?.let(::codecName)
+        val codec = t.mime?.let(::codecName)
         return listOfNotNull(context.getString(R.string.player_track_n, n), lang, codec).joinToString(" · ")
     }
 
@@ -742,7 +1054,7 @@ class PlayerModel(
         val s = _ui.value ?: return
         if (!prepared || s.error) return
         if (seekInFlightSince == 0L && !s.ended) {
-            runCatching { mp.currentPosition.toLong() }.getOrNull()?.let { _position.value = it }
+            runCatching { mp.position }.getOrNull()?.let { _position.value = it }
         }
         val pos = _position.value
         val a = s.abA
@@ -766,18 +1078,37 @@ class PlayerModel(
             store.forget(item.path)
             return
         }
-        val pos = runCatching { mp.currentPosition.toLong() }.getOrNull() ?: return
+        val pos = runCatching { mp.position }.getOrNull() ?: return
         if (Resume.shouldRemember(pos, s.durationMs)) store.remember(item.path, pos) else store.forget(item.path)
     }
 
     /** The Surface the video is drawn on; null while the screen has none (rotation, closing). */
-    fun attachSurface(s: Surface?) {
+    fun attachSurface(s: Surface?, width: Int = surfaceW, height: Int = surfaceH) {
         surface = s
+        surfaceW = width
+        surfaceH = height
         val mp = player ?: return
         if (_ui.value?.isVideo != true) return
-        runCatching { mp.setSurface(s) }
+        runCatching { mp.setSurface(s, width, height) }
         // A paused video shows nothing on a fresh surface until the next frame: redraw it.
         if (s != null && prepared && _ui.value?.playing == false) seekTo(_position.value)
+    }
+
+    /** The transparent view over the video that VLC draws subtitle tracks on. */
+    fun attachSubtitleSurface(s: Surface?) {
+        subtitleSurface = s
+        if (_ui.value?.isVideo == true) runCatching { player?.setSubtitleSurface(s) }
+    }
+
+    fun detachSubtitleSurface(s: Surface) {
+        if (subtitleSurface === s) attachSubtitleSurface(null)
+    }
+
+    /** The view the video is drawn in changed size (VLC scales to it). */
+    fun surfaceSize(width: Int, height: Int) {
+        surfaceW = width
+        surfaceH = height
+        runCatching { player?.setSurfaceSize(width, height) }
     }
 
     fun detachSurface(s: Surface) {
@@ -794,9 +1125,9 @@ class PlayerModel(
                 pause()
                 resumeOnFocusGain = wasPlaying
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching { player?.setVolume(DUCK_VOLUME, DUCK_VOLUME) }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> runCatching { player?.setVolume(DUCK_VOLUME) }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                runCatching { player?.setVolume(1f, 1f) }
+                runCatching { player?.setVolume(1f) }
                 if (resumeOnFocusGain) {
                     resumeOnFocusGain = false
                     play()
@@ -913,12 +1244,15 @@ class PlayerModel(
         const val BOOST_SPEED = 2f
         const val SEEK_STEP_MS = 10_000L
         const val MAX_SUBTITLE_DELAY = 60_000L
+        const val MAX_AUDIO_DELAY = 10_000L
+        private const val NO_PICTURE_TIMEOUT_MS = 6_000L
         private const val AB_MIN_MS = 500L
         private const val SEEK_TIMEOUT_MS = 1_500L
         private const val DUCK_VOLUME = 0.3f
         private const val POSTER_PX = 1280
         private const val ART_PX = 1024
         private const val MAX_EAGER_SUBTITLES = 6
+        private const val MAX_USB_SUBTITLES = 40
     }
 }
 

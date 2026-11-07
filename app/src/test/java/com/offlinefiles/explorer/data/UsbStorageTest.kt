@@ -120,6 +120,52 @@ class UsbStorageTest {
     }
 
     @Test
+    fun grantIsMatchedToTheDriveItWasAskedFor() {
+        val volumes = StorageVolumes.list(app)
+        // The picker spells the drive's id in another case: still the same drive.
+        FakeDriveProvider.drives["1a2b-3c4d"] = stick
+        assertEquals(GrantResult.Granted(uuid), StorageVolumes.acceptGrant(app, FakeDriveProvider.treeUri("1a2b-3c4d"), volumes))
+        assertEquals(VolumeAccess.DOCUMENTS, usb().access)
+        StorageVolumes.releaseGrants(app)
+        assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
+
+        // The picker knows the drive by an id the volume list doesn't: it is the drive that was asked for.
+        File(stick, "readme.txt").writeText("hello")
+        FakeDriveProvider.drives["USB0"] = stick
+        assertEquals(GrantResult.NotADrive, StorageVolumes.acceptGrant(app, FakeDriveProvider.treeUri("USB0"), volumes))
+        assertEquals(GrantResult.NotADrive, StorageVolumes.acceptGrant(app, FakeDriveProvider.treeUri("primary"), volumes, requested = uuid))
+        StorageVolumes.rememberRequest(app, usb())
+        val requested = StorageVolumes.takeRequest(app)
+        assertEquals(uuid, requested)
+        assertNull(StorageVolumes.takeRequest(app))
+        assertEquals(GrantResult.Granted(uuid), StorageVolumes.acceptGrant(app, FakeDriveProvider.treeUri("USB0"), volumes, requested))
+        val granted = usb()
+        assertEquals(VolumeAccess.DOCUMENTS, granted.access)
+        assertEquals(FakeDriveProvider.treeUri("USB0").toString(), granted.treeUri)
+        Stores.update(app.contentResolver, StorageVolumes.list(app))
+        val items = (Stores.tree(mount)!!.list(mount) as ListResult.Ok).items
+        assertEquals(listOf("$mount/readme.txt"), items.map { it.path })
+        StorageVolumes.releaseGrants(app)
+        assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
+
+        // Allowed earlier under an id no volume has, and only this drive is waiting: it is that drive.
+        app.contentResolver.takePersistableUriPermission(
+            FakeDriveProvider.treeUri("USB0"),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+        assertEquals(VolumeAccess.DOCUMENTS, usb().access)
+        assertEquals(FakeDriveProvider.treeUri("USB0").toString(), usb().treeUri)
+        StorageVolumes.releaseGrants(app)
+        assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
+
+        // Access that still can't list the drive is given back and reported, not kept.
+        assertEquals(GrantResult.Unreadable, StorageVolumes.acceptGrant(app, FakeDriveProvider.treeUri("DEAD-BEEF"), volumes, uuid))
+        assertTrue(StorageVolumes.grantedTrees(app).isEmpty())
+        assertEquals(VolumeAccess.NEEDS_GRANT, usb().access)
+        assertTrue(UsbDiagnostics.report(app).contains("listing failed"))
+    }
+
+    @Test
     fun documentTreeFileOperations() {
         File(stick, "DCIM/Camera").mkdirs()
         File(stick, "DCIM/Camera/IMG_1.jpg").writeBytes(ByteArray(1000) { it.toByte() })

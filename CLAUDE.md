@@ -8,12 +8,15 @@ User-facing docs (Korean) are in `README.md`.
 
 ```bash
 ./gradlew assembleDebug            # debug APK
-./gradlew testDebugUnitTest        # 61 JVM tests (Robolectric + Roborazzi)
+./gradlew testDebugUnitTest        # 66 JVM tests (Robolectric + Roborazzi)
 ./gradlew testDebugUnitTest --tests '*GalleryCoreTest'   # one class
 ./gradlew lintRelease              # report: app/build/reports/lint-results-release.txt
 ./gradlew assembleRelease bundleRelease   # needs the upload key, see Signing
 ```
 
+- CI: `.github/workflows/apk.yml` builds debug APKs on every push and republishes them as the GitHub release
+  `apk-<branch>` (README links `apk-main`): `FileExplorer-<branch>.apk` (arm64) and `-universal.apk`.
+  Debug-signed, so the key differs per run. APKs are split per ABI (`splits.abi`) because of libVLC.
 - Cloud sessions: `.claude/hooks/session-start.sh` installs the Android SDK (`/opt/android-sdk`),
   writes `local.properties`, installs `7z`, and pre-fetches Gradle deps.
 - Maven Central sometimes returns HTTP 429 to this environment (Gradle deps and Robolectric's
@@ -26,9 +29,26 @@ User-facing docs (Korean) are in `README.md`.
   player logic and subtitle parsing (`core/player`)
 - `data/` Android access: storage volumes, MediaStore (`MediaLibrary.kt`), prefs, player memory (`PlayerStore.kt`), intents (`Platform.kt`)
 - `ops/` background operations; `ui/` Compose screens (`browser`, `gallery`, `home`, `archive`, `settings`, `dialogs`, `player`)
-- `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` owns the framework `MediaPlayer` (no ExoPlayer/libVLC: no new libraries)
+- `ui/MainViewModel.kt` holds app state; `ui/player/PlayerModel.kt` drives an `Engine` (`ui/player/Engines.kt`).
+  The app plays everything with `VlcEngine` (libVLC); Android's `MediaPlayer` is not used for playback and VLC can't be
+  switched off (owner's decision). `Engines.factory` makes the engine: VLC in the app; `PlayerFlowTest` swaps in
+  `MediaPlayerEngine` (test sources, Robolectric's `ShadowMediaPlayer`) because libVLC can't load on a PC.
+  Never let `LibVLC` load its natives itself (it calls `System.exit` on failure) — `VlcEngine` loads them first.
+  Videos/music never go to other apps (no in-app/external setting; no "Open with" for them; `openWith`/`openAs`
+  play media in the app). VLC options follow VLC for Android's defaults plus `--avi-index=3`; VLC dialogs are
+  answered by `VlcEngine.answerDialogs` (errors logged to diagnostics). `core/player` `DecoderChoice`: hardware only
+  for h264/hevc/vp8/vp9/av1, legacy containers (avi, mpg, vob, wmv, flv, rmvb, 3gp...) in software; `PlayerModel`
+  and `InlinePlayer` retry in software on error, on a legacy codec at prepare, or (full player) on no picture in 6 s.
+  Settings › Version shows `BuildConfig.BUILD_ID` (commit hash + time) so a tester can tell builds apart.
+- Subtitles: files next to the video (USB document trees copied to the cache), a file picked by hand
+  (`PlayerModel.addSubtitleFile`, system picker), and the choice per video in `PlayerStore.subtitleChoice`;
+  then a Korean embedded track (`autoSelectEmbedded`). Matching rules are in `core/player/Subtitles.kt`.
+- `data/CrashLog.kt` records the last uncaught exception; `data/UsbDiagnostics.kt` builds Settings › Diagnostics (crash,
+  Android exit reasons including native crashes, USB).
+- `ui/gallery/InlineVideo.kt`: videos play in place in the photo viewer (same engines); file-list videos open there
+  when `Settings.videosInViewer` (default on). Tests that drive the full player from the list turn it off.
 - Tests: `app/src/test/...` — `FileOpsTest` 13, `ArchiveTest` 10, `AppFlowTest` 4, `GalleryCoreTest` 6, `GalleryFlowTest` 4,
-  `StoreOpsTest` 6, `UsbStorageTest` 4, `UsbFlowTest` 2, `PlayerCoreTest` 8, `PlayerFlowTest` 4
+  `StoreOpsTest` 6, `UsbStorageTest` 5, `UsbFlowTest` 2, `PlayerCoreTest` 10, `PlayerFlowTest` 6
 
 ## USB drives
 
@@ -44,7 +64,7 @@ User-facing docs (Korean) are in `README.md`.
 ## Screenshots
 
 `AppFlowTest` / `GalleryFlowTest` / `UsbFlowTest` / `PlayerFlowTest` rewrite `app/screenshots/*.png` on every test run
-(00–30 file manager, 40–48 gallery, 50–55 USB, 60–66 player). After UI changes, open the changed ones and check layout and Korean/English text, then
+(00–30 file manager, 40–48 gallery, 50–55 USB, 60–69 player/viewer). After UI changes, open the changed ones and check layout and Korean/English text, then
 commit them with the change. Unrelated diffs are usually only the clock/date shown on screen.
 Video thumbnails show a placeholder under Robolectric (no video decoding); check those on a device.
 The player screenshots have a black video area for the same reason (Robolectric's `ShadowMediaPlayer` prepares and
@@ -52,12 +72,13 @@ seeks but draws nothing); `PlayerFlowTest` sets lengths with `ShadowMediaPlayer.
 
 ## Rules
 
-- Offline app: never add the `INTERNET` permission. Do not add new libraries.
+- Offline app: never add the `INTERNET` permission. Libraries may be added when they help (pin exact versions,
+  nothing that needs network access); list each one in Settings › Licenses (`SettingsScreen.kt` `libraries`).
 - Do not change `applicationId`, the signing config, or existing file-management behavior unless asked.
 - Every string change goes in both `res/values/strings.xml` (English) and `res/values-ko/strings.xml` (Korean).
 - Keep README's feature list and test counts in sync with the code.
-- Use only APIs available at minSdk 26 or guard them with `Build.VERSION.SDK_INT`. EXIF uses the framework
-  `android.media.ExifInterface` (no androidx exifinterface), so androidx-only tag constants do not exist.
+- Use only APIs available at minSdk 26 or guard them with `Build.VERSION.SDK_INT`. EXIF uses
+  `androidx.exifinterface.media.ExifInterface` (not the framework class).
 
 ## Signing
 

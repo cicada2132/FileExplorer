@@ -191,7 +191,7 @@ fun BrowserScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
             when {
                 drive != null -> EmptyState(
                     Icons.Filled.Usb, stringResource(R.string.browser_usb_denied_title), stringResource(R.string.browser_usb_denied_body),
-                    action = if (drive.canGrant) stringResource(R.string.action_allow_access) to { vm.showDialog(DialogState.UsbAccess(drive)) }
+                    action = if (drive.canGrant || drive.access == VolumeAccess.DOCUMENTS) stringResource(R.string.action_allow_access) to { vm.showDialog(DialogState.UsbAccess(drive)) }
                     else stringResource(R.string.action_home) to vm::goHome,
                 )
                 browser.status == BrowserUi.Status.DENIED -> EmptyState(

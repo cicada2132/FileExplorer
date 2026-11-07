@@ -4,6 +4,8 @@ import android.os.SystemClock
 import android.view.Surface
 import android.view.TextureView
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -448,9 +450,19 @@ private fun PlayerScreen(vm: MainViewModel, snackbar: SnackbarHostState) {
 
         ResumeBanner(p, s, raised = chrome && !locked)
 
+        // Subtitle files from anywhere (other folders, other drives) through the system file picker.
+        val pickSubtitle = rememberLauncherForActivityResult(PickSubtitleFile()) { uri -> if (uri != null) p.addSubtitleFile(uri) }
         val open = panel
         if (open != null) {
-            PlayerPanels(vm, s, open, onPanel = { panel = it }, onNote = note)
+            PlayerPanels(
+                vm, s, open,
+                onPanel = { panel = it },
+                onNote = note,
+                onPickSubtitle = {
+                    panel = null
+                    runCatching { pickSubtitle.launch(p.subtitlePickerStart()) }
+                },
+            )
         }
 
         SnackbarHost(
@@ -491,10 +503,11 @@ private fun VideoLayer(p: PlayerModel, s: PlayerUi, zoom: Float, pan: Offset) {
                         override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
                             val sf = Surface(st)
                             surface = sf
-                            p.attachSurface(sf)
+                            p.attachSurface(sf, width, height)
                         }
 
-                        override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+                        override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) =
+                            p.surfaceSize(width, height)
 
                         override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
                             surface?.let {
@@ -519,6 +532,40 @@ private fun VideoLayer(p: PlayerModel, s: PlayerUi, zoom: Float, pan: Offset) {
                 bitmap,
                 contentDescription = null,
                 contentScale = if (w > 0f && s.videoW > 0) ContentScale.FillBounds else ContentScale.Fit,
+                modifier = transformed,
+            )
+        }
+        // VLC draws subtitle tracks inside the file on a transparent layer of the same size. It is there
+        // for every video, so VLC finds it ready when it starts instead of re-attaching mid-play.
+        if (s.isVideo) {
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).apply {
+                        isOpaque = false
+                        surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                            private var surface: Surface? = null
+
+                            override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                val sf = Surface(st)
+                                surface = sf
+                                p.attachSubtitleSurface(sf)
+                            }
+
+                            override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) = Unit
+
+                            override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
+                                surface?.let {
+                                    p.detachSubtitleSurface(it)
+                                    it.release()
+                                }
+                                surface = null
+                                return true
+                            }
+
+                            override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) = Unit
+                        }
+                    }
+                },
                 modifier = transformed,
             )
         }
@@ -1139,9 +1186,21 @@ private fun BoxScope.ErrorLayer(vm: MainViewModel, s: PlayerUi) {
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
         )
+        // VLC's own words, for a report (also in Settings › Diagnostics).
+        s.errorDetail?.let { detail ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                detail,
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                maxLines = 4,
+            )
+        }
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { vm.openWith(item.path) }) { Text(stringResource(R.string.player_open_other), color = Color.White) }
+            // Tries again with VLC's own (software) decoders; no other app is involved.
+            OutlinedButton(onClick = vm.player::reload) { Text(stringResource(R.string.player_retry), color = Color.White) }
             if (s.canNext) OutlinedButton(onClick = vm.player::next) { Text(stringResource(R.string.player_next_file), color = Color.White) }
         }
     }
@@ -1167,3 +1226,15 @@ fun rotationLabelText(context: android.content.Context, mode: RotationMode): Str
         RotationMode.PORTRAIT -> R.string.rotation_portrait
     },
 )
+
+/** The system file picker for any file (subtitle types have no reliable MIME type), opened at [Uri] if given. */
+private class PickSubtitleFile : ActivityResultContract<android.net.Uri?, android.net.Uri?>() {
+    override fun createIntent(context: android.content.Context, input: android.net.Uri?): android.content.Intent =
+        android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+            .apply { if (input != null) putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, input) }
+
+    override fun parseResult(resultCode: Int, intent: android.content.Intent?): android.net.Uri? =
+        if (resultCode == android.app.Activity.RESULT_OK) intent?.data else null
+}

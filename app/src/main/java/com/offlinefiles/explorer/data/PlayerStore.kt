@@ -12,6 +12,7 @@ import com.offlinefiles.explorer.core.player.RotationMode
 class PlayerStore(context: Context) {
     private val sp = context.getSharedPreferences("player", Context.MODE_PRIVATE)
     private val resume = context.getSharedPreferences("player_resume", Context.MODE_PRIVATE)
+    private val subtitles = context.getSharedPreferences("player_subtitles", Context.MODE_PRIVATE)
 
     var aspect: AspectMode
         get() = enumOr(sp.getString("aspect", null), AspectMode.FIT)
@@ -33,6 +34,11 @@ class PlayerStore(context: Context) {
         get() = sp.getFloat("subtitle_scale", 1f).coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE)
         set(v) = sp.edit().putFloat("subtitle_scale", v.coerceIn(MIN_SUBTITLE_SCALE, MAX_SUBTITLE_SCALE)).apply()
 
+    /** VLC engine: hardware decoders where possible (false: VLC's software decoders only). */
+    var hwDecoding: Boolean
+        get() = sp.getBoolean("hw_decoding", true)
+        set(v) = sp.edit().putBoolean("hw_decoding", v).apply()
+
     /** Where [path] was left off, or null. */
     fun position(path: String): Long? =
         resume.getString(path, null)?.substringBefore(',')?.toLongOrNull()?.takeIf { it > 0 }
@@ -44,6 +50,29 @@ class PlayerStore(context: Context) {
 
     fun forget(path: String) {
         if (resume.contains(path)) resume.edit().remove(path).apply()
+    }
+
+    /**
+     * The subtitle the user chose for [video] last time: a file and its track, or [SubtitleChoice.OFF]
+     * when they turned subtitles off. Null when they never chose (the player picks one itself).
+     */
+    fun subtitleChoice(video: String): SubtitleChoice? {
+        val v = subtitles.getString(video, null) ?: return null
+        val parts = v.split('\n')
+        if (parts.firstOrNull() == "off") return SubtitleChoice.OFF
+        val path = parts.getOrNull(0)?.takeIf { it.isNotEmpty() } ?: return null
+        return SubtitleChoice(path, parts.getOrNull(1)?.toIntOrNull() ?: 0)
+    }
+
+    fun rememberSubtitle(video: String, choice: SubtitleChoice) {
+        val v = if (choice.path == null) "off" else "${choice.path}\n${choice.track}"
+        subtitles.edit().putString(video, "$v\n${System.currentTimeMillis()}").apply()
+        val all = subtitles.all
+        if (all.size <= MAX_ENTRIES) return
+        val oldest = all.entries
+            .sortedBy { (it.value as? String)?.substringAfterLast('\n')?.toLongOrNull() ?: 0L }
+            .take(all.size - MAX_ENTRIES)
+        subtitles.edit().apply { oldest.forEach { remove(it.key) } }.apply()
     }
 
     private fun trim() {
@@ -62,5 +91,12 @@ class PlayerStore(context: Context) {
         const val MAX_ENTRIES = 300
         const val MIN_SUBTITLE_SCALE = 0.6f
         const val MAX_SUBTITLE_SCALE = 2f
+    }
+}
+
+/** A subtitle file and track the user picked for a video; [path] null means "subtitles off". */
+data class SubtitleChoice(val path: String?, val track: Int) {
+    companion object {
+        val OFF = SubtitleChoice(null, 0)
     }
 }
