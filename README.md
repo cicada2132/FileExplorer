@@ -84,3 +84,8 @@
 - `MANAGE_EXTERNAL_STORAGE`(모든 파일 접근)와 `REQUEST_INSTALL_PACKAGES`는 Play 정책상 제한 권한이라 심사 대상입니다.
   Play Console에서 파일 관리자가 핵심 기능이라는 권한 선언을 제출해야 합니다.
 - 패키지명 `com.offlinefiles.explorer`는 첫 업로드 후에는 바꿀 수 없습니다. 바꾸려면 `app/build.gradle.kts`의 `applicationId`를 먼저 수정하세요.
+
+## 개발 이어서 하기
+
+Claude 계정을 새로 만든 뒤 작업을 이어 가는 방법(GitHub·클라우드 환경 다시 연결, 첫 메시지)과 2026-11-10 기준 상태,
+기기에서 확인할 것은 [docs/HANDOFF.md](docs/HANDOFF.md)에 있습니다.

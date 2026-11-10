@@ -3,6 +3,8 @@
 Offline Android file manager. Kotlin + Jetpack Compose (Material 3), single `:app` module.
 Package / applicationId `com.offlinefiles.explorer`, minSdk 26, compile/targetSdk 36.
 User-facing docs (Korean) are in `README.md`.
+Handoff after the 2026-11 Claude account reset (branches, open PR #3, owner decisions, device checks still to do):
+`docs/HANDOFF.md` (Korean). Read it first in a new account.
 
 ## Commands
 
@@ -74,3 +76,4 @@ seeks but draws nothing); `PlayerFlowTest` sets lengths with `ShadowMediaPlayer.
 
 - `docs/release-1.1.0-checklist.md`: the build/verify checklist used for 1.1.0.
 - `docs/player.md`: built-in player design, VLC feature comparison, MX Player UI mapping, what is left out and why.
+- `docs/HANDOFF.md`: project state on 2026-11-10, how to reconnect GitHub and the cloud environment after an account reset.
